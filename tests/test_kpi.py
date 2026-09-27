@@ -1,0 +1,83 @@
+from datetime import date, datetime, timedelta
+
+from backend.analytics import alerts, kpi
+from backend.models import Employee
+from backend.services.importer import ImportContext, import_file
+
+MON = date(2026, 9, 14)  # a Monday
+
+
+def _add(db, tmp_xlsx, name, day, rows):
+    p = tmp_xlsx(f"{name}_{day}.xlsx", name=name, work_date=day, rows=rows)
+    import_file(db, p.read_bytes(), ImportContext(filename=p.name)); db.commit()
+
+
+def _seed(db, tmp_xlsx):
+    db.add(Employee(name="Alice Admin", tracking_start=MON - timedelta(days=7)))
+    db.add(Employee(name="Bob Builder", tracking_start=MON))
+    db.commit()
+    for i in range(10):  # two weeks of weekdays
+        d = MON + timedelta(days=i + (i // 5) * 2)
+        _add(db, tmp_xlsx, "Alice Admin", d, [
+            ("P1", "-Approve the invoice\n-Teams & email follow up", "/", "Yes", "/", 4),
+            ("P2", "Drawing of bracket assembly", "Drawing", "No", 10, 4),
+        ])
+        if i != 3:  # Bob misses Thursday of week 1
+            _add(db, tmp_xlsx, "Bob Builder", d, [("P3", "Model updates", "Model", "Yes", 5, 13.5 if i == 9 else 8)])
+
+
+def test_summary_and_distribution(db, tmp_xlsx):
+    _seed(db, tmp_xlsx)
+    cats = kpi.categories(db)
+    ds = kpi.load(db, MON, MON + timedelta(days=11))
+    alice = db.query(Employee).filter_by(name="Alice Admin").one()
+    s = kpi.summarize(ds, cats, alice.id)
+    assert s["total_hours"] == 80 and s["days_submitted"] == 10 and s["avg_daily_hours"] == 8
+    assert s["task_count"] == 20 and s["completed_tasks"] == 10 and s["incomplete_tasks"] == 10
+    assert s["completion_rate"] == 50.0 and s["avg_hours_per_task"] == 4
+    assert s["feature_total"] == 100 and s["hours_per_feature"] == 0.4
+    assert s["admin_pct"] == 25.0 and s["communication_pct"] == 25.0
+    assert {c["category"] for c in s["categories"]} == {"Administrative", "Communication", "Design & Engineering"}
+    assert abs(sum(c["percent"] for c in s["categories"]) - 100) < 0.2
+
+
+def test_missing_and_status(db, tmp_xlsx):
+    _seed(db, tmp_xlsx)
+    now = datetime(2026, 9, 25, 20, 0)
+    missing = kpi.missing_timesheets(db, MON, date(2026, 9, 25), now=now)
+    bob = [m for m in missing if m["employee"] == "Bob Builder"]
+    assert [m["date"] for m in bob] == ["2026-09-17"]
+    alice = [m for m in missing if m["employee"] == "Alice Admin"]
+    assert alice == []  # Alice submitted every weekday in the range
+
+
+def test_anomalies_and_alerts(db, tmp_xlsx):
+    _seed(db, tmp_xlsx)
+    last = date(2026, 9, 25)
+    anomalies = kpi.daily_hours_anomalies(db, MON, last)
+    bob = [a for a in anomalies if a["employee"] == "Bob Builder"]
+    assert bob and bob[0]["hours"] == 13.5 and bob[0]["recent_average"] == 8
+    out = alerts.build_alerts(db, last, lookback_days=14, now=datetime(2026, 9, 25, 20, 0))
+    kinds = {a["type"] for a in out}
+    assert {"missing", "unusual_hours", "incomplete", "gmail"} <= kinds
+    text = " ".join(a["message"] for a in out).lower()
+    for judgement in ("unproductive", "poor", "lazy", "score"):
+        assert judgement not in text
+    msg = next(a["message"] for a in out if a["type"] == "unusual_hours")
+    assert msg == "Bob Builder recorded 13.5 hours on 2026-09-25. Recent average: 8 hours."
+
+
+def test_category_shift():
+    cur = {"total_hours": 40, "categories": [{"category": "Administrative", "percent": 29}, {"category": "Coordination", "percent": 71}]}
+    base = {"total_hours": 40, "categories": [{"category": "Administrative", "percent": 15}, {"category": "Coordination", "percent": 85}]}
+    shifts = kpi.category_shifts(cur, base)
+    assert {s["category"] for s in shifts} == {"Administrative", "Coordination"}
+
+
+def test_day_status_pending_vs_missing(db, tmp_xlsx):
+    _seed(db, tmp_xlsx)
+    day = date(2026, 9, 28)  # Monday with no submissions
+    before = kpi.day_status(db, day, now=datetime(2026, 9, 28, 10, 0))
+    assert before["expected"] == 2 and len(before["pending"]) == 2 and not before["missing"]
+    after = kpi.day_status(db, day, now=datetime(2026, 9, 28, 19, 0))
+    assert len(after["missing"]) == 2

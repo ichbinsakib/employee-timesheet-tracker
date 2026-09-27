@@ -1,0 +1,41 @@
+# ---- Local data: NEVER commit (lives on the desktop only) ----
+/data/
+/backups/
+/reports/
+/imports/
+/logs/
+/secrets/
+/samples/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.pdf
+!docs/**/*.pdf
+
+# ---- Secrets & config ----
+.env
+.env.*
+!.env.example
+*credentials*.json
+*token*.json
+client_secret*.json
+
+# ---- Python / tooling ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.claude/
+.vscode/
+.idea/
+*.log
+Thumbs.db

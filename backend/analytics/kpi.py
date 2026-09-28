@@ -4,8 +4,8 @@ Everything here is descriptive: it reports what the timesheets say. There is
 deliberately no "productivity score" — timesheets are evidence, not the whole
 picture of anyone's performance.
 
-Category hours are estimates: an entry's hours are split evenly across the
-activity lines written in its notes.
+Work is grouped by the company's own costing codes (descriptions from the
+"COSTING CODE" sheet in the timesheets), using each row's recorded hours.
 """
 from __future__ import annotations
 
@@ -17,15 +17,11 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models import (
-    DataQualityIssue, Employee, EntryActivity, Submission, TimesheetEntry, WorkCategory,
-)
+from backend.models import DataQualityIssue, Employee, EntryActivity, Submission, TimesheetEntry
 from backend.services import app_settings
+from backend.services import costing_codes as cc
 from backend.services.employees import expected_on
 from backend.services.importer import ACTIVE_STATUSES
-
-ADMIN, COMMUNICATION, COORDINATION = "Administrative", "Communication", "Coordination"
-
 
 # --------------------------------------------------------------------------- data loading
 @dataclass
@@ -36,7 +32,7 @@ class EntryRow:
     hours: float
     completed: bool | None
     features: int | None
-    category_id: int | None
+    code: str | None
 
 
 @dataclass
@@ -44,7 +40,6 @@ class ActivityRow:
     entry_id: int
     employee_id: int
     work_date: date
-    category_id: int | None
     hours: float
     normalized: str
     text: str
@@ -65,29 +60,30 @@ def load(db: Session, start: date, end: date, employee_id: int | None = None) ->
     ds = Dataset(start, end)
     q = select(
         TimesheetEntry.id, TimesheetEntry.employee_id, TimesheetEntry.work_date, TimesheetEntry.burden_hours,
-        TimesheetEntry.completed, TimesheetEntry.feature_count, TimesheetEntry.primary_category_id,
+        TimesheetEntry.completed, TimesheetEntry.feature_count, TimesheetEntry.costing_code,
     ).where(TimesheetEntry.work_date >= start, TimesheetEntry.work_date <= end)
     if employee_id:
         q = q.where(TimesheetEntry.employee_id == employee_id)
     for r in db.execute(q):
-        row = EntryRow(r[0], r[1], r[2], float(r[3] or 0), r[4], r[5], r[6])
+        row = EntryRow(r[0], r[1], r[2], float(r[3] or 0), r[4], r[5], (r[6] or "").strip().upper() or None)
         (ds.entries if row.hours > 0 else ds.zero_hour_entries).append(row)
 
     aq = select(
-        EntryActivity.entry_id, TimesheetEntry.employee_id, TimesheetEntry.work_date, EntryActivity.category_id,
+        EntryActivity.entry_id, TimesheetEntry.employee_id, TimesheetEntry.work_date,
         EntryActivity.allocated_hours, EntryActivity.normalized, EntryActivity.text,
     ).join(TimesheetEntry, TimesheetEntry.id == EntryActivity.entry_id).where(
         TimesheetEntry.work_date >= start, TimesheetEntry.work_date <= end)
     if employee_id:
         aq = aq.where(TimesheetEntry.employee_id == employee_id)
     for r in db.execute(aq):
-        if float(r[4] or 0) > 0:  # lines of 0-hour rows are not work done that day
-            ds.activities.append(ActivityRow(r[0], r[1], r[2], r[3], float(r[4] or 0), r[5], r[6]))
+        if float(r[3] or 0) > 0:  # lines of 0-hour rows are not work done that day
+            ds.activities.append(ActivityRow(r[0], r[1], r[2], float(r[3] or 0), r[4], r[5]))
     return ds
 
 
-def categories(db: Session) -> dict[int, WorkCategory]:
-    return {c.id: c for c in db.scalars(select(WorkCategory))}
+def codes(db: Session) -> dict[str, str | None]:
+    """Costing code -> description."""
+    return cc.descriptions(db)
 
 
 def _r(x: float | None, n: int = 2) -> float | None:
@@ -99,25 +95,24 @@ def _pct(part: float, whole: float) -> float | None:
 
 
 # --------------------------------------------------------------------------- metrics
-def category_distribution(ds: Dataset, cats: dict[int, WorkCategory], employee_id: int | None = None) -> list[dict]:
-    hours: dict[int | None, float] = defaultdict(float)
-    for a in ds.activities:
-        if employee_id is None or a.employee_id == employee_id:
-            hours[a.category_id] += a.hours
+def code_distribution(ds: Dataset, desc: dict[str, str | None], employee_id: int | None = None) -> list[dict]:
+    """Hours per costing code (recorded hours, not estimates)."""
+    hours: dict[str | None, float] = defaultdict(float)
+    tasks: Counter = Counter()
+    for e in ds.entries:
+        if employee_id is None or e.employee_id == employee_id:
+            hours[e.code] += e.hours
+            tasks[e.code] += 1
     total = sum(hours.values())
-    out = []
-    for cid, h in sorted(hours.items(), key=lambda kv: -kv[1]):
-        c = cats.get(cid) if cid else None
-        out.append({"category_id": cid, "category": c.name if c else "Uncategorized",
-                    "color": c.color if c else "#9ca3af", "hours": _r(h), "percent": _pct(h, total)})
-    return out
+    return [
+        {"code": code or cc.NO_CODE, "description": desc.get(code) if code else "No costing code on the row",
+         "label": cc.label(code, desc), "in_list": bool(code and code in getattr(desc, "listed", desc)),
+         "hours": _r(h), "tasks": tasks[code], "percent": _pct(h, total)}
+        for code, h in sorted(hours.items(), key=lambda kv: -kv[1])
+    ]
 
 
-def _share(dist: list[dict], name: str) -> float:
-    return next((d["percent"] or 0.0 for d in dist if d["category"] == name), 0.0)
-
-
-def summarize(ds: Dataset, cats: dict[int, WorkCategory], employee_id: int | None = None) -> dict:
+def summarize(ds: Dataset, desc: dict[str, str | None], employee_id: int | None = None) -> dict:
     entries = [e for e in ds.entries if employee_id is None or e.employee_id == employee_id]
     total_hours = sum(e.hours for e in entries)
     days = sorted({(e.employee_id, e.work_date) for e in entries})
@@ -127,7 +122,7 @@ def summarize(ds: Dataset, cats: dict[int, WorkCategory], employee_id: int | Non
     feat_total = sum(e.features or 0 for e in feat_entries)
     feat_hours = sum(e.hours for e in feat_entries)
     acts = [a for a in ds.activities if employee_id is None or a.employee_id == employee_id]
-    dist = category_distribution(ds, cats, employee_id)
+    dist = code_distribution(ds, desc, employee_id)
     return {
         "total_hours": _r(total_hours),
         "days_submitted": len(days),
@@ -144,10 +139,8 @@ def summarize(ds: Dataset, cats: dict[int, WorkCategory], employee_id: int | Non
         "feature_total": feat_total,
         "feature_hours": _r(feat_hours),
         "hours_per_feature": _r(feat_hours / feat_total) if feat_total else None,
-        "admin_pct": _share(dist, ADMIN),
-        "communication_pct": _share(dist, COMMUNICATION),
-        "coordination_pct": _share(dist, COORDINATION),
-        "categories": dist,
+        "codes_used": len(dist),
+        "codes": dist,
     }
 
 
@@ -180,11 +173,11 @@ def week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def weekly_series(ds: Dataset, cats: dict[int, WorkCategory], employee_id: int | None = None) -> list[dict]:
+def weekly_series(ds: Dataset, desc: dict[str, str | None], employee_id: int | None = None) -> list[dict]:
     weeks: dict[date, dict] = {}
     w = week_start(ds.start)
     while w <= ds.end:
-        weeks[w] = {"week": w.isoformat(), "hours": 0.0, "tasks": 0, "completed": 0, "incomplete": 0, "categories": defaultdict(float)}
+        weeks[w] = {"week": w.isoformat(), "hours": 0.0, "tasks": 0, "completed": 0, "incomplete": 0, "codes": defaultdict(float)}
         w += timedelta(days=7)
     for e in ds.entries:
         if employee_id is not None and e.employee_id != employee_id:
@@ -195,18 +188,12 @@ def weekly_series(ds: Dataset, cats: dict[int, WorkCategory], employee_id: int |
             row["tasks"] += 1
             row["completed"] += e.completed is True
             row["incomplete"] += e.completed is False
-    for a in ds.activities:
-        if employee_id is not None and a.employee_id != employee_id:
-            continue
-        row = weeks.get(week_start(a.work_date))
-        if row:
-            c = cats.get(a.category_id) if a.category_id else None
-            row["categories"][c.name if c else "Uncategorized"] += a.hours
+            row["codes"][e.code or cc.NO_CODE] += e.hours
     out = []
     for row in weeks.values():
-        total = sum(row["categories"].values())
-        row["category_pct"] = {k: _pct(v, total) for k, v in row["categories"].items()}
-        row["categories"] = {k: round(v, 2) for k, v in row["categories"].items()}
+        total = sum(row["codes"].values())
+        row["code_pct"] = {k: _pct(v, total) for k, v in row["codes"].items()}
+        row["codes"] = {k: round(v, 2) for k, v in row["codes"].items()}
         row["hours"] = round(row["hours"], 2)
         row["completion_rate"] = _pct(row["completed"], row["completed"] + row["incomplete"])
         out.append(row)
@@ -293,13 +280,13 @@ def data_quality(db: Session, start: date, end: date, employee_id: int | None = 
 
 
 # --------------------------------------------------------------------------- baselines & anomalies
-def baseline(db: Session, cats: dict[int, WorkCategory], start: date, end: date, employee_id: int | None = None) -> dict:
+def baseline(db: Session, desc: dict[str, str | None], start: date, end: date, employee_id: int | None = None) -> dict:
     """Same-length period immediately before [start, end]."""
     length = (end - start).days + 1
     b_end = start - timedelta(days=1)
     b_start = b_end - timedelta(days=length - 1)
     ds = load(db, b_start, b_end, employee_id)
-    out = summarize(ds, cats, employee_id)
+    out = summarize(ds, desc, employee_id)
     out["start"], out["end"] = b_start.isoformat(), b_end.isoformat()
     return out
 
@@ -310,8 +297,7 @@ def compare(current: dict, base: dict) -> list[dict]:
     for key, label, unit in [
         ("avg_daily_hours", "Average daily hours", "h"), ("task_count", "Tasks", ""),
         ("completion_rate", "Completion rate", "%"), ("avg_hours_per_task", "Average hours per task", "h"),
-        ("admin_pct", "Administrative work", "%"), ("communication_pct", "Communication work", "%"),
-        ("coordination_pct", "Coordination work", "%"),
+        ("codes_used", "Costing codes worked on", ""),
     ]:
         cur, prev = current.get(key), base.get(key)
         change = round(cur - prev, 2) if isinstance(cur, (int, float)) and isinstance(prev, (int, float)) else None
@@ -352,37 +338,40 @@ def daily_hours_anomalies(db: Session, start: date, end: date, employee_id: int 
     return out
 
 
-def category_shifts(current: dict, base: dict, min_points: float = 10.0, min_base_hours: float = 8.0) -> list[dict]:
+def code_shifts(current: dict, base: dict, min_points: float = 15.0, min_base_hours: float = 8.0) -> list[dict]:
+    """Costing codes whose share of hours moved by at least `min_points` percentage points."""
     if (base.get("total_hours") or 0) < min_base_hours or (current.get("total_hours") or 0) < min_base_hours:
         return []
-    prev = {c["category"]: c["percent"] or 0 for c in base["categories"]}
-    cur = {c["category"]: c["percent"] or 0 for c in current["categories"]}
+    prev = {c["code"]: c for c in base["codes"]}
+    cur = {c["code"]: c for c in current["codes"]}
     out = []
-    for name in set(prev) | set(cur):
-        diff = cur.get(name, 0) - prev.get(name, 0)
-        if abs(diff) >= min_points:
-            out.append({"category": name, "previous_pct": prev.get(name, 0), "current_pct": cur.get(name, 0), "change": round(diff, 1)})
+    for code in set(prev) | set(cur):
+        p = (prev.get(code) or {}).get("percent") or 0
+        c = (cur.get(code) or {}).get("percent") or 0
+        if abs(c - p) >= min_points:
+            lbl = (cur.get(code) or prev.get(code))["label"]
+            out.append({"code": code, "label": lbl, "previous_pct": p, "current_pct": c, "change": round(c - p, 1)})
     out.sort(key=lambda r: -abs(r["change"]))
     return out
 
 
 # --------------------------------------------------------------------------- composed views
 def employee_overview(db: Session, start: date, end: date) -> list[dict]:
-    cats = categories(db)
+    desc = codes(db)
     ds = load(db, start, end)
     missing = Counter(m["employee_id"] for m in missing_timesheets(db, start, end))
     rows = []
     for emp in db.scalars(select(Employee).order_by(Employee.name)):
-        s = summarize(ds, cats, emp.id)
+        s = summarize(ds, desc, emp.id)
         if not emp.active and not s["task_count"]:
             continue
-        top = s["categories"][0]["category"] if s["categories"] else None
+        top = s["codes"][0]["label"] if s["codes"] else None
         rows.append({
             "employee_id": emp.id, "employee": emp.name, "department": emp.department, "active": emp.active,
             "hours": s["total_hours"], "days_submitted": s["days_submitted"], "avg_daily_hours": s["avg_daily_hours"],
             "tasks": s["task_count"], "completed": s["completed_tasks"], "incomplete": s["incomplete_tasks"],
             "completion_rate": s["completion_rate"], "avg_hours_per_task": s["avg_hours_per_task"],
-            "missing_days": missing.get(emp.id, 0), "top_category": top,
+            "missing_days": missing.get(emp.id, 0), "top_code": top,
         })
     return rows
 
@@ -400,7 +389,7 @@ def day_status(db: Session, day: date, now: datetime | None = None) -> dict:
             continue
         (missing if _deadline_passed(e, day, now) else pending).append({"employee_id": e.id, "employee": e.name, "deadline": e.submission_deadline})
     ds = load(db, day, day)
-    s = summarize(ds, categories(db))
+    s = summarize(ds, codes(db))
     return {
         "date": day.isoformat(), "is_holiday": day in holidays,
         "expected": len(expected), "submitted": len(have), "missing": missing, "pending": pending,

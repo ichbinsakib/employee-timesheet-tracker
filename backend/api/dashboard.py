@@ -20,7 +20,7 @@ def dashboard(date: str | None = None, days: int = 30, db: Session = Depends(get
     day = parse_day(date)
     days = min(max(days, 7), 365)
     start = day - timedelta(days=days - 1)
-    cats = kpi.categories(db)
+    cats = kpi.codes(db)
     ds = kpi.load(db, start, day)
     period = kpi.summarize(ds, cats)
     last_sync = db.scalar(select(JobRun).where(JobRun.job == "gmail_sync").order_by(JobRun.id.desc()).limit(1))
@@ -30,8 +30,8 @@ def dashboard(date: str | None = None, days: int = 30, db: Session = Depends(get
         "today": kpi.day_status(db, day),
         "alerts": alerts.build_alerts(db, day, lookback_days=7),
         "employees": kpi.employee_overview(db, start, day),
-        "distribution": period["categories"],
-        "period_summary": {k: v for k, v in period.items() if k != "categories"},
+        "distribution": period["codes"],
+        "period_summary": {k: v for k, v in period.items() if k != "codes"},
         "daily": kpi.daily_series(ds),
         "weekly": kpi.weekly_series(ds, cats),
         "last_sync": {"at": last_sync.started_at.isoformat(), "status": last_sync.status, "message": last_sync.message} if last_sync else None,

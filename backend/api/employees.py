@@ -12,7 +12,8 @@ from backend.analytics import kpi
 from backend.api.common import parse_range
 from backend.auth.deps import require_manager, require_viewer
 from backend.database.session import get_db
-from backend.models import Employee, TimesheetEntry, WorkCategory
+from backend.models import Employee, TimesheetEntry
+from backend.services import costing_codes as cc
 from backend.services.employee_import import EmployeeImportError, import_employees
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
@@ -112,35 +113,37 @@ def employee_detail(employee_id: int, start: str | None = None, end: str | None 
     if e is None:
         raise HTTPException(404, "Employee not found")
     s, t = parse_range(start, end, days)
-    cats = kpi.categories(db)
+    cats = kpi.codes(db)
     ds = kpi.load(db, s, t, e.id)
     summary = kpi.summarize(ds, cats, e.id)
     base = kpi.baseline(db, cats, s, t, e.id)
     recent = db.execute(
-        select(TimesheetEntry, WorkCategory.name).outerjoin(WorkCategory, WorkCategory.id == TimesheetEntry.primary_category_id)
+        select(TimesheetEntry)
         .where(TimesheetEntry.employee_id == e.id).order_by(TimesheetEntry.work_date.desc(), TimesheetEntry.original_excel_row).limit(50)
     ).all()
     return {
         "employee": employee_out(e),
         "period": {"start": s.isoformat(), "end": t.isoformat()},
-        "summary": {k: v for k, v in summary.items() if k != "categories"},
-        "categories": summary["categories"],
+        "summary": {k: v for k, v in summary.items() if k != "codes"},
+        "codes": summary["codes"],
         "daily": kpi.daily_series(ds, e.id),
         "weekly": kpi.weekly_series(ds, cats, e.id),
         "comparison": {"previous_period": {"start": base["start"], "end": base["end"]}, "rows": kpi.compare(summary, base)},
-        "category_shifts": kpi.category_shifts(summary, base),
+        "code_shifts": kpi.code_shifts(summary, base),
         "anomalies": kpi.daily_hours_anomalies(db, s, t, e.id),
         "missing": kpi.missing_timesheets(db, s, t, e.id),
         "data_quality": kpi.data_quality(db, s, t, e.id, min_severity="info"),
         "repeated": kpi.repeated_activities(ds, e.id, limit=10),
-        "recent_entries": [entry_out(x, cat) for x, cat in recent],
+        "recent_entries": [entry_out(x, cats) for (x,) in recent],
     }
 
 
-def entry_out(x: TimesheetEntry, category: str | None) -> dict:
+def entry_out(x: TimesheetEntry, desc: dict[str, str | None]) -> dict:
+    code = (x.costing_code or "").strip().upper() or None
     return {
         "id": x.id, "submission_id": x.submission_id, "employee_id": x.employee_id, "date": x.work_date.isoformat(),
         "costing_code": x.costing_code, "title": x.title, "notes": x.notes, "file_type": x.file_type,
         "completed": x.completed, "completed_raw": x.completed_raw, "features": x.feature_count,
-        "hours": x.burden_hours, "excel_row": x.original_excel_row, "category": category,
+        "hours": x.burden_hours, "excel_row": x.original_excel_row,
+        "code_description": desc.get(code) if code else None, "code_label": cc.label(code, desc),
     }

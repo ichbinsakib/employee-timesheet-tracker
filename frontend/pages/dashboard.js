@@ -1,6 +1,6 @@
 import { api } from '../services/api.js';
 import { alertsList, bindRows, esc, fmt, hrs, isoToday, niceDate, niceDateTime, pct, rangeControl, shiftDate, table, tiles, toast, withBusy } from '../components/ui.js';
-import { columnChart, hbars, categoryHeatmap } from '../components/charts.js';
+import { columnChart, hbars, codeHeatmap, codeBars } from '../components/charts.js';
 import { navigate } from '../src/app.js';
 
 const state = { date: null, days: 30, trend: 'daily' };
@@ -44,8 +44,8 @@ export async function render(el, ctx) {
 
     <div class="grid cols-2">
       <div class="card"><div class="card-head"><h2>Needs attention</h2><span class="muted small">last 7 days</span></div>${alertsList(d.alerts, { limit: 8 })}</div>
-      <div class="card"><div class="card-head"><h2>Work distribution</h2><span class="muted small">last ${d.period.days} days · estimated from notes</span></div>
-        ${hbars(d.distribution.map(c => ({ label: c.category, value: c.percent, tip: `${c.category}: ${fmt(c.percent)}% · ${fmt(c.hours, 2)} h (est.)` })))}</div>
+      <div class="card"><div class="card-head"><h2>Hours by costing code</h2><span class="muted small">last ${d.period.days} days</span></div>
+        ${codeBars(d.distribution)}</div>
     </div>
 
     <div class="card">
@@ -59,13 +59,13 @@ export async function render(el, ctx) {
         { label: 'Completion', num: true, render: r => r.completion_rate === null ? '<span class="muted">not recorded</span>' : pct(r.completion_rate) },
         { label: 'Avg hours/task', key: 'avg_hours_per_task', num: true },
         { label: 'Missing days', num: true, render: r => r.missing_days ? `<b>${r.missing_days}</b>` : '0' },
-        { label: 'Main category', render: r => esc(r.top_category || '—') },
+        { label: 'Main costing code', render: r => esc(r.top_code || '—') },
       ], d.employees, { onRow: true, empty: 'No employees yet. They are added automatically from the first timesheet, or in Employees.' })}</div>
     </div>
 
     <div class="card">
       <div class="card-head"><h2>Trends</h2>
-        <div class="seg" id="trend">${[['daily', 'Daily hours'], ['weekly', 'Weekly hours'], ['tasks', 'Tasks'], ['completion', 'Completion'], ['categories', 'Category changes']]
+        <div class="seg" id="trend">${[['daily', 'Daily hours'], ['weekly', 'Weekly hours'], ['tasks', 'Tasks'], ['completion', 'Completion'], ['codes', 'Costing codes by week']]
           .map(([k, l]) => `<button data-k="${k}" class="${state.trend === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <div id="trend-body"></div>
     </div>`;
@@ -101,7 +101,7 @@ export async function render(el, ctx) {
             tip: x.completion_rate === null ? `Week of ${niceDate(x.week)}: completion not recorded` : `Week of ${niceDate(x.week)}<br>${fmt(x.completion_rate)}% of tasks with a Yes/No were completed` })), { unit: '%', aria: 'Weekly completion rate' })
         : '<div class="empty">Completion (Yes/No) has not been recorded on timesheets in this period.</div>';
     } else {
-      body.innerHTML = categoryHeatmap(d.weekly);
+      body.innerHTML = codeHeatmap(d.weekly, Object.fromEntries(d.distribution.map(c => [c.code, c.label])));
     }
   };
   el.querySelectorAll('#trend button').forEach(b => b.addEventListener('click', () => {

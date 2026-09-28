@@ -1,6 +1,6 @@
 import { api } from '../services/api.js';
 import { bindRows, esc, fmt, niceDate, pct, rangeControl, sevBadge, signed, table, tiles } from '../components/ui.js';
-import { categoryHeatmap, columnChart, hbars } from '../components/charts.js';
+import { codeHeatmap, columnChart, hbars, codeBars } from '../components/charts.js';
 import { navigate } from '../src/app.js';
 
 const state = { days: 30, employee_id: '' };
@@ -28,14 +28,13 @@ export async function render(el, ctx) {
       { label: 'Tasks', value: fmt(s.task_count), sub: s.zero_hour_rows ? `${s.zero_hour_rows} row(s) with 0 hours not counted` : '' },
       { label: 'Completion rate', value: s.completion_rate === null ? '—' : pct(s.completion_rate), sub: `${s.completion_not_recorded} not recorded` },
       { label: 'Avg hours per task', value: fmt(s.avg_hours_per_task, 2) },
-      { label: 'Administrative', value: pct(s.admin_pct), sub: 'of hours (est.)' },
-      { label: 'Communication', value: pct(s.communication_pct), sub: 'of hours (est.)' },
-      { label: 'Coordination', value: pct(s.coordination_pct), sub: 'of hours (est.)' },
+      { label: 'Costing codes worked on', value: fmt(s.codes_used) },
       { label: 'Hours per feature', value: fmt(s.hours_per_feature, 2), sub: `${s.feature_total} features, ${fmt(s.feature_hours, 2)} h` },
     ])}
 
     <div class="grid cols-2">
-      <div class="card"><h2>Work category distribution</h2>${hbars(d.categories.map(c => ({ label: c.category, value: c.percent, tip: `${c.category}: ${fmt(c.percent)}% · ${fmt(c.hours, 2)} h` })))}</div>
+      <div class="card"><div class="card-head"><h2>Hours by costing code</h2></div>
+        ${codeBars(d.codes)}</div>
       <div class="card"><div class="card-head"><h2>Compared with previous period</h2><span class="muted small">${esc(niceDate(d.comparison.previous_period.start))} – ${esc(niceDate(d.comparison.previous_period.end))}</span></div>
         ${table([
           { label: 'Measure', render: r => esc(r.metric) },
@@ -43,9 +42,9 @@ export async function render(el, ctx) {
           { label: 'Previous', num: true, render: r => r.unit === '%' ? pct(r.previous) : esc(fmt(r.previous, 2)) },
           { label: 'Change', num: true, render: r => esc(signed(r.change, r.unit === '%' ? ' pts' : '')) },
         ], d.comparison.rows)}
-        ${d.category_shifts.length ? `<h3 style="margin-top:14px">Category shifts of 10+ points</h3>${table([
-          { label: 'Category', render: r => esc(r.category) }, { label: 'Before', num: true, render: r => pct(r.previous_pct) },
-          { label: 'Now', num: true, render: r => pct(r.current_pct) }, { label: 'Change', num: true, render: r => esc(signed(r.change, ' pts')) }], d.category_shifts)}` : ''}
+        ${d.code_shifts.length ? `<h3 style="margin-top:14px">Costing codes whose share moved 15+ points</h3>${table([
+          { label: 'Costing code', render: r => esc(r.label) }, { label: 'Before', num: true, render: r => pct(r.previous_pct) },
+          { label: 'Now', num: true, render: r => pct(r.current_pct) }, { label: 'Change', num: true, render: r => esc(signed(r.change, ' pts')) }], d.code_shifts)}` : ''}
       </div>
     </div>
 
@@ -54,14 +53,14 @@ export async function render(el, ctx) {
       <div class="card"><h2>Daily tasks</h2>${columnChart(d.daily.map(x => ({ label: x.date, short: short(x.date), value: x.tasks, tip: `${niceDate(x.date)}: ${x.tasks} task(s), ${x.completed} completed, ${x.incomplete} not` })), { aria: 'Daily tasks' })}</div>
     </div>
 
-    <div class="card"><h2>Category share by week</h2>${categoryHeatmap(d.weekly)}</div>
+    <div class="card"><h2>Costing codes by week</h2>${codeHeatmap(d.weekly, Object.fromEntries(d.codes.map(c => [c.code, c.label])))}</div>
 
     ${d.employees.length ? `<div class="card"><h2>By employee</h2><div id="emps">${table([
       { label: 'Employee', render: r => `<a href="#/employees/${r.employee_id}">${esc(r.employee)}</a>` },
       { label: 'Hours', key: 'hours', num: true }, { label: 'Avg hours/day', key: 'avg_daily_hours', num: true },
       { label: 'Tasks', key: 'tasks', num: true }, { label: 'Completed', key: 'completed', num: true }, { label: 'Incomplete', key: 'incomplete', num: true },
       { label: 'Completion', num: true, render: r => pct(r.completion_rate) }, { label: 'Avg hours/task', key: 'avg_hours_per_task', num: true },
-      { label: 'Missing days', key: 'missing_days', num: true }, { label: 'Main category', render: r => esc(r.top_category || '—') },
+      { label: 'Missing days', key: 'missing_days', num: true }, { label: 'Main costing code', render: r => esc(r.top_code || '—') },
     ], d.employees, { onRow: true })}</div></div>` : ''}
 
     <div class="grid cols-2">

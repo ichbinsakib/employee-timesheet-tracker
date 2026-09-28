@@ -13,7 +13,7 @@ They are **not yet verified**.
 | 4 | Data is parsed | Automated | Real layout replica: name, date, P4627, 16 activity lines, 10.4 h. Shifted/re-ordered layouts also tested. |
 | 5 | Data is validated | Automated | Bad hours, Yes/No, features, total mismatch, short notes, missing name/date, .xls. |
 | 6 | Data is stored on the desktop | Automated · Verified live | SQLite file in `TIMESHEET_HOME\data`. |
-| 7 | KPI calculations performed | Automated | Hours, averages, completion, categories, features, missing, anomalies, baselines. |
+| 7 | KPI calculations performed | Automated | Hours, averages, completion, costing codes, features, missing, anomalies, baselines. |
 | 8 | Dashboard updates | Automated · Verified in browser (demo data) | Dashboard, employee detail, timesheets, analytics, reports, imports, settings pages rendered with 154 demo timesheets. |
 | 9 | Daily report generated | Automated · Verified live | xlsx/csv/pdf written on schedule and on startup catch-up. |
 | 10 | Duplicate email not imported twice | Automated | Same message skipped; identical file in another email recorded as duplicate. |

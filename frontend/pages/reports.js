@@ -1,6 +1,6 @@
 import { api, download } from '../services/api.js';
 import { alertsList, esc, fmt, isoToday, niceDate, niceDateTime, pct, sevBadge, shiftDate, signed, table, tiles, toast, withBusy } from '../components/ui.js';
-import { hbars } from '../components/charts.js';
+import { hbars, codeBars } from '../components/charts.js';
 
 const state = { date: null };
 
@@ -36,17 +36,17 @@ export async function render(el, ctx) {
       { label: 'Submitted', render: e => e.submitted ? 'Yes' : '<b>No</b>' },
       { label: 'Hours', key: 'hours', num: true }, { label: 'Tasks', key: 'tasks', num: true },
       { label: 'Completed', key: 'completed', num: true }, { label: 'Incomplete', key: 'incomplete', num: true },
-      { label: 'Main categories', render: e => esc(e.main_categories || '—') },
+      { label: 'Main costing codes', render: e => esc(e.main_codes || '—') },
       { label: 'Avg hours/day (30d)', key: 'avg_daily_hours_30d', num: true },
       { label: 'vs 30-day avg', num: true, render: e => esc(signed(e.hours_vs_30d, ' h')) },
     ], r.employees, { empty: 'No active employees.' })}</div>
 
     <div class="grid cols-2">
-      <div class="card"><h2>Category distribution</h2>${hbars(r.categories.map(c => ({ label: c.category, value: c.percent, tip: `${c.category}: ${fmt(c.percent)}% · ${fmt(c.hours, 2)} h` })))}</div>
+      <div class="card"><h2>Hours by costing code</h2>${codeBars(r.codes)}</div>
       <div class="card"><h2>Change vs last 30 days</h2>${table([
-        { label: 'Category', render: c => esc(c.category) }, { label: 'This day', num: true, render: c => pct(c.today_pct) },
+        { label: 'Costing code', render: c => esc(c.label) }, { label: 'This day', num: true, render: c => pct(c.today_pct) },
         { label: 'Last 30 days', num: true, render: c => pct(c.last_30d_pct) }, { label: 'Change', num: true, render: c => esc(signed(c.change, ' pts')) },
-      ], r.category_changes.slice(0, 8), { empty: 'Not enough history yet.' })}</div>
+      ], r.code_changes.slice(0, 8), { empty: 'Not enough history yet.' })}</div>
     </div>
 
     <div class="grid cols-2">

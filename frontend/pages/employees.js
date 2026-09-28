@@ -1,6 +1,6 @@
 import { api } from '../services/api.js';
 import { alertsList, badge, bindRows, completedLabel, esc, fmt, formValues, hrs, modal, niceDate, pct, rangeControl, sevBadge, signed, table, tiles, toast } from '../components/ui.js';
-import { columnChart, hbars } from '../components/charts.js';
+import { columnChart, hbars, codeBars } from '../components/charts.js';
 import { navigate } from '../src/app.js';
 
 const state = { days: 30 };
@@ -114,7 +114,7 @@ async function renderDetail(el, ctx, id) {
     ...d.missing.map(m => ({ severity: 'warning', title: 'Missing timesheet', message: `No timesheet for ${niceDate(m.date)}.` })),
     ...d.anomalies.map(a => ({ severity: 'info', title: 'Unusual hours', message: a.recent_average !== null
       ? `${fmt(a.hours, 2)} hours on ${niceDate(a.date)}. Recent average: ${fmt(a.recent_average, 2)} hours.` : `${fmt(a.hours, 2)} hours on ${niceDate(a.date)} (${a.reason}).` })),
-    ...d.category_shifts.map(c => ({ severity: 'info', title: 'Category change', message: `${c.category} work ${c.change > 0 ? 'increased' : 'decreased'} from ${fmt(c.previous_pct)}% to ${fmt(c.current_pct)}% compared with the previous period.` })),
+    ...d.code_shifts.map(c => ({ severity: 'info', title: 'Costing code change', message: `Share of hours on ${c.label} ${c.change > 0 ? 'increased' : 'decreased'} from ${fmt(c.previous_pct)}% to ${fmt(c.current_pct)}% compared with the previous period.` })),
   ];
 
   el.innerHTML = `
@@ -140,8 +140,8 @@ async function renderDetail(el, ctx, id) {
         { ref: { value: e.expected_daily_hours, label: 'expected' }, aria: 'Daily hours', height: 180 })}</div>
 
     <div class="grid cols-2">
-      <div class="card"><div class="card-head"><h2>Work distribution</h2><span class="muted small">estimated from notes</span></div>
-        ${hbars(d.categories.map(c => ({ label: c.category, value: c.percent, tip: `${c.category}: ${fmt(c.percent)}% · ${fmt(c.hours, 2)} h` })))}</div>
+      <div class="card"><div class="card-head"><h2>Hours by costing code</h2></div>
+        ${codeBars(d.codes)}</div>
       <div class="card"><h2>Alerts</h2>${alertsList(alerts, { empty: 'No alerts for this period.' })}</div>
     </div>
 
@@ -158,7 +158,7 @@ async function renderDetail(el, ctx, id) {
         { label: 'Date', render: r => esc(niceDate(r.date)) },
         { label: 'Costing code', render: r => esc(r.costing_code || '—') },
         { label: 'Notes', cls: 'notes', render: r => esc(r.notes || '') },
-        { label: 'Category', render: r => esc(r.category || '—') },
+        { label: 'Code description', render: r => esc(r.code_description || '—') },
         { label: 'Completed', render: r => completedLabel(r.completed) },
         { label: 'Features', key: 'features', num: true },
         { label: 'Hours', key: 'hours', num: true },

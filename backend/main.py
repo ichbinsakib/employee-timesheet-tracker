@@ -87,6 +87,9 @@ async def security_middleware(request: Request, call_next):
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     if path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    elif path.startswith("/static/"):
+        # Revalidate on every load (cheap: ETag -> 304) so an app update is never hidden by old cached pages
+        response.headers["Cache-Control"] = "no-cache"
 
     # Log every API call that did not come from the desktop itself (LAN / Tailscale).
     if path.startswith("/api/") and not path.startswith("/api/auth/") and not security.is_local_request(request):

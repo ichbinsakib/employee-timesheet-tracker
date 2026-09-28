@@ -1,6 +1,6 @@
 """Regression: the real CAMCO .xlsm splits headings over two rows ("COSTING"/"CODE",
 "Burden"/"Hours") and carries hidden legacy sheets plus a visible lookup sheet."""
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -64,3 +64,27 @@ def test_retry_failed_import(db, tmp_path):
     assert [s.import_status for s in new] == ["imported"]
     assert new[0].gmail_message_id == "m1" and new[0].total_hours == 5.4
     assert db.query(Submission).count() == 1 and db.query(TimesheetEntry).count() == 4
+
+
+def test_costing_code_list_is_learned_on_import(db, tmp_path):
+    from backend.analytics import kpi
+    from backend.models import CostingCode
+    from backend.services import costing_codes as cc
+    path = build_camco_style(tmp_path / "09-25-2026 Test Person.xlsm")
+    import_file(db, path.read_bytes(), ImportContext(filename=path.name))
+    db.commit()
+    assert db.get(CostingCode, "P0205").description == "MANUFACTURING CHECKSHEET ENTRY"
+    # a hand-edited description is not overwritten by later timesheets
+    row = db.get(CostingCode, "P0205")
+    row.description, row.source = "Checksheet entry (edited)", "manual"
+    db.commit()
+    cc.upsert(db, {"P0205": "MANUFACTURING CHECKSHEET ENTRY", "P9999": "NEW CODE"})
+    db.commit()
+    assert db.get(CostingCode, "P0205").description == "Checksheet entry (edited)"
+    assert db.get(CostingCode, "P9999").description == "NEW CODE"
+    # codes used on rows but not in the list are still reported, flagged as not listed
+    day = date(2026, 9, 25)
+    s = kpi.summarize(kpi.load(db, day, day), kpi.codes(db))
+    by_code = {c["code"]: c for c in s["codes"]}
+    assert by_code["P3096"]["hours"] == 4.3 and by_code["P3096"]["in_list"] is False
+    assert "P1169" not in by_code  # 0-hour row

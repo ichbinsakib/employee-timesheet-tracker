@@ -50,11 +50,11 @@ set TIMESHEET_PORT=8765
 |---|---|
 | **Dashboard** | Today: expected / received / missing, hours, tasks, completed / incomplete · alerts · employee overview · work distribution · trends. **Sync Gmail Now** button. |
 | **Employees** | Everyone, editable (email, department, working days, deadline). **Import employees…** takes a CSV/Excel export (e.g. from the HR system): headers `full_name`/`name`, optional `email`, `department`, `designation`, `status`; shows a preview before saving; matches by email then name and keeps old spellings as aliases. Click a person for hours, averages, completion, categories, daily trend, recent entries, comparison with the previous period, data-quality and anomaly alerts. |
-| **Timesheets** | Every entry, filterable by date, person, category, completion and text. Click an entry to see how each note line was categorised. |
-| **Analytics** | Period KPIs, category distribution and weekly heatmap, repeated activities, unusual hours, missing timesheets, data quality. |
+| **Timesheets** | Every entry, filterable by date, person, costing code, completion and text. |
+| **Analytics** | Period KPIs, hours by costing code and a weekly costing-code heatmap, repeated activities, unusual hours, missing timesheets, data quality. |
 | **Reports** | Daily management report on screen and as **Excel, CSV, PDF**. Saved automatically every day. |
 | **Imports** | Gmail status, manual upload, every received file with its status and issues, background job log. |
-| **Settings** | Sync/backup/report schedules, holidays, **Backup Now / Restore**, categories & keyword rules, users & roles, access log. |
+| **Settings** | Sync/backup/report schedules, holidays, **Backup Now / Restore**, costing codes, users & roles, access log. |
 
 Alerts are always factual ("recorded 13.5 hours; recent average 8.1"). The app never
 labels anyone as productive or unproductive and has no "productivity score" —
@@ -68,10 +68,11 @@ moved columns, extra rows or a shifted table still work. "Name" and "Date" are f
 their labels. A `/` means "not applicable". The "Total Burden Time" row is checked
 against the sum of the rows.
 
-Notes are split into lines ("-SO Release", "-Kanban checking"). Each line is matched to
-a work category by editable keyword rules; lines with no specific keyword inherit the
-heading's category. An entry's hours are split evenly across its lines, so category
-hours are clearly labelled **estimates**.
+Work is grouped by **your own costing codes**, using the hours recorded on each row.
+The code list and descriptions are read automatically from the **COSTING CODE** sheet inside
+the timesheets; codes used on a row but missing from that list are described from their latest
+note (marked "from notes") until someone adds a description in Settings → Costing codes.
+Rows with 0 hours (standing items listed but not worked that day) are kept but not counted as tasks.
 
 ### Duplicates and corrections
 

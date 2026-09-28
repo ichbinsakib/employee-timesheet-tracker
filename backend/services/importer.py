@@ -25,6 +25,7 @@ from backend.config import settings
 from backend.excel.parser import ParsedSheet, date_from_filename, parse_workbook
 from backend.excel.validator import Issue, validate_sheet
 from backend.models import DataQualityIssue, EntryActivity, Employee, Submission, TimesheetEntry
+from backend.services import costing_codes
 from backend.services import employees as emp_svc
 from backend.services.classifier import WEAK_PRIORITY, Classifier, normalize_activity, split_notes
 
@@ -91,6 +92,9 @@ def import_file(db: Session, content: bytes, ctx: ImportContext, stored_path: Pa
         )
         db.add(sub)
         return [sub]
+
+    # Learn the company's costing codes from the workbook's "COSTING CODE" sheet (if any)
+    costing_codes.upsert(db, costing_codes.extract_codes_from_bytes(content))
 
     parsed = parse_workbook(content)
     if parsed.error:

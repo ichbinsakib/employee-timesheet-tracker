@@ -147,6 +147,20 @@ class EntryActivity(Base):
     category: Mapped["WorkCategory | None"] = relationship()
 
 
+class CostingCode(Base):
+    """The company's costing codes (e.g. P0205 = "Manufacturing checksheet entry").
+
+    Filled automatically from the "COSTING CODE" sheet inside received timesheets;
+    descriptions can also be edited in Settings. Work is reported by these codes.
+    """
+    __tablename__ = "costing_codes"
+
+    code: Mapped[str] = mapped_column(String(50), primary_key=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(16), default="timesheet")  # timesheet | manual
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class WorkCategory(Base):
     __tablename__ = "work_categories"
 

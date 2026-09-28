@@ -81,7 +81,7 @@ def test_upload_dashboard_report_flow(local, tmp_xlsx):
     assert detail["summary"]["total_hours"] == 10.4 and detail["recent_entries"]
     entries = local.get("/api/timesheets", params={"end": "2026-09-23"}).json()
     assert entries["total"] == 1
-    assert len(local.get(f"/api/timesheets/{entries['items'][0]['id']}").json()["activities"]) == 16
+    assert local.get(f"/api/timesheets/{entries['items'][0]['id']}").json()["code_label"] == "P4627 – Co-ordination task (from notes)"
     rep = local.get("/api/reports/daily", params={"date": "2026-09-23"}).json()
     assert rep["summary"]["total_hours"] == 10.4
     for fmt, magic in (("xlsx", b"PK"), ("pdf", b"%PDF"), ("csv", b"\xef\xbb\xbf")):

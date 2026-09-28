@@ -28,7 +28,7 @@ def _seed(db, tmp_xlsx):
 
 def test_summary_and_distribution(db, tmp_xlsx):
     _seed(db, tmp_xlsx)
-    cats = kpi.categories(db)
+    cats = kpi.codes(db)
     ds = kpi.load(db, MON, MON + timedelta(days=11))
     alice = db.query(Employee).filter_by(name="Alice Admin").one()
     s = kpi.summarize(ds, cats, alice.id)
@@ -36,9 +36,9 @@ def test_summary_and_distribution(db, tmp_xlsx):
     assert s["task_count"] == 20 and s["completed_tasks"] == 10 and s["incomplete_tasks"] == 10
     assert s["completion_rate"] == 50.0 and s["avg_hours_per_task"] == 4
     assert s["feature_total"] == 100 and s["hours_per_feature"] == 0.4
-    assert s["admin_pct"] == 25.0 and s["communication_pct"] == 25.0
-    assert {c["category"] for c in s["categories"]} == {"Administrative", "Communication", "Design & Engineering"}
-    assert abs(sum(c["percent"] for c in s["categories"]) - 100) < 0.2
+    # grouped by the rows' own costing codes, using recorded hours
+    assert {(c["code"], c["hours"], c["tasks"], c["percent"]) for c in s["codes"]} == {("P1", 40, 10, 50.0), ("P2", 40, 10, 50.0)}
+    assert s["codes_used"] == 2
 
 
 def test_missing_and_status(db, tmp_xlsx):
@@ -67,11 +67,11 @@ def test_anomalies_and_alerts(db, tmp_xlsx):
     assert msg == "Bob Builder recorded 13.5 hours on 2026-09-25. Recent average: 8 hours."
 
 
-def test_category_shift():
-    cur = {"total_hours": 40, "categories": [{"category": "Administrative", "percent": 29}, {"category": "Coordination", "percent": 71}]}
-    base = {"total_hours": 40, "categories": [{"category": "Administrative", "percent": 15}, {"category": "Coordination", "percent": 85}]}
-    shifts = kpi.category_shifts(cur, base)
-    assert {s["category"] for s in shifts} == {"Administrative", "Coordination"}
+def test_code_shift():
+    cur = {"total_hours": 40, "codes": [{"code": "P1", "label": "P1 – A", "percent": 45}, {"code": "P2", "label": "P2 – B", "percent": 55}]}
+    base = {"total_hours": 40, "codes": [{"code": "P1", "label": "P1 – A", "percent": 20}, {"code": "P2", "label": "P2 – B", "percent": 80}]}
+    shifts = kpi.code_shifts(cur, base)
+    assert {s["code"] for s in shifts} == {"P1", "P2"} and shifts[0]["label"].startswith("P")
 
 
 def test_day_status_pending_vs_missing(db, tmp_xlsx):
@@ -86,7 +86,7 @@ def test_day_status_pending_vs_missing(db, tmp_xlsx):
 def test_zero_hour_rows_are_not_tasks(db, tmp_xlsx):
     _add(db, tmp_xlsx, "Zed Zero", MON, [("P1", "Worked item", "/", "/", "/", 6), ("P2", "Standing item", "/", "/", "/", 0),
                                          ("P3", "Another standing item", "/", "/", "/", 0)])
-    s = kpi.summarize(kpi.load(db, MON, MON), kpi.categories(db))
+    s = kpi.summarize(kpi.load(db, MON, MON), kpi.codes(db))
     assert s["task_count"] == 1 and s["zero_hour_rows"] == 2
     assert s["avg_hours_per_task"] == 6 and s["total_hours"] == 6
 

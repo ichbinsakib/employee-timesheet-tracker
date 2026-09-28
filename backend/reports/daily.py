@@ -12,14 +12,15 @@ from sqlalchemy.orm import Session
 from backend.analytics import alerts as alerts_mod
 from backend.analytics import kpi
 from backend.config import settings
-from backend.models import Employee, GeneratedReport, TimesheetEntry, WorkCategory, now
+from backend.models import Employee, GeneratedReport, TimesheetEntry, now
+from backend.services import costing_codes as cc
 
 FORMATS = ("xlsx", "csv", "pdf")
 
 
 def build_daily_report(db: Session, day: date, now_dt: datetime | None = None) -> dict:
     now_dt = now_dt or datetime.now()
-    cats = kpi.categories(db)
+    cats = kpi.codes(db)
     status = kpi.day_status(db, day, now=now_dt)
     ds = kpi.load(db, day, day)
     today = kpi.summarize(ds, cats)
@@ -38,25 +39,25 @@ def build_daily_report(db: Session, day: date, now_dt: datetime | None = None) -
             "submitted": emp.id in submitted_ids,
             "hours": s["total_hours"], "tasks": s["task_count"], "completed": s["completed_tasks"],
             "incomplete": s["incomplete_tasks"], "completion_rate": s["completion_rate"],
-            "main_categories": ", ".join(f"{c['category']} {c['percent']:g}%" for c in s["categories"][:3] if c["percent"]),
+            "main_codes": ", ".join(f"{c['code']} {c['percent']:g}%" for c in s["codes"][:3] if c["percent"]),
             "avg_daily_hours_30d": h["avg_daily_hours"],
             "hours_vs_30d": round(s["total_hours"] - h["avg_daily_hours"], 2) if emp.id in submitted_ids and h["avg_daily_hours"] else None,
         })
 
     changes = []
     if hist_summary["total_hours"]:
-        prev = {c["category"]: c["percent"] or 0 for c in hist_summary["categories"]}
-        cur = {c["category"]: c["percent"] or 0 for c in today["categories"]}
+        prev = {c["code"]: c["percent"] or 0 for c in hist_summary["codes"]}
+        cur = {c["code"]: c["percent"] or 0 for c in today["codes"]}
+        labels = {c["code"]: c["label"] for c in hist_summary["codes"] + today["codes"]}
         for name in sorted(set(prev) | set(cur)):
-            changes.append({"category": name, "today_pct": cur.get(name, 0), "last_30d_pct": prev.get(name, 0),
+            changes.append({"code": name, "label": labels.get(name, name), "today_pct": cur.get(name, 0), "last_30d_pct": prev.get(name, 0),
                             "change": round(cur.get(name, 0) - prev.get(name, 0), 1)})
         changes.sort(key=lambda r: -abs(r["change"]))
 
     attention = alerts_mod.build_alerts(db, day, lookback_days=1, now=now_dt)
     entries = db.execute(
-        select(TimesheetEntry, Employee.name, WorkCategory.name)
+        select(TimesheetEntry, Employee.name)
         .join(Employee, Employee.id == TimesheetEntry.employee_id)
-        .outerjoin(WorkCategory, WorkCategory.id == TimesheetEntry.primary_category_id)
         .where(TimesheetEntry.work_date == day).order_by(Employee.name, TimesheetEntry.original_excel_row)
     ).all()
 
@@ -72,17 +73,18 @@ def build_daily_report(db: Session, day: date, now_dt: datetime | None = None) -
             "completion_not_recorded": today["completion_not_recorded"], "completion_rate": today["completion_rate"],
             "avg_daily_hours_30d": hist_summary["avg_daily_hours"],
         },
-        "categories": today["categories"],
-        "category_changes": changes,
+        "codes": today["codes"],
+        "code_changes": changes,
         "employees": employees,
         "anomalies": kpi.daily_hours_anomalies(db, day, day),
         "data_quality": kpi.data_quality(db, day, day, min_severity="warning"),
         "attention": attention,
         "entries": [
-            {"employee": name, "costing_code": e.costing_code, "category": cat, "title": e.title, "notes": e.notes,
+            {"employee": name, "costing_code": e.costing_code,
+             "code_description": cats.get((e.costing_code or "").strip().upper()), "title": e.title, "notes": e.notes,
              "file_type": e.file_type, "completed": {True: "Yes", False: "No"}.get(e.completed, "Not recorded"),
              "features": e.feature_count, "hours": e.burden_hours}
-            for e, name, cat in entries
+            for e, name in entries
         ],
     }
 
@@ -135,18 +137,19 @@ def to_xlsx(report: dict) -> bytes:
     ws.column_dimensions["A"].width = 44
     ws.column_dimensions["B"].width = 16
 
-    sheet("Employees", ["Employee", "Submitted", "Hours", "Tasks", "Completed", "Incomplete", "Completion %", "Main categories", "Avg daily hours (30d)", "Hours vs 30d avg"],
+    sheet("Employees", ["Employee", "Submitted", "Hours", "Tasks", "Completed", "Incomplete", "Completion %", "Main costing codes", "Avg daily hours (30d)", "Hours vs 30d avg"],
           [[e["employee"], "Yes" if e["submitted"] else "No", e["hours"], e["tasks"], e["completed"], e["incomplete"], e["completion_rate"],
-            e["main_categories"], e["avg_daily_hours_30d"], e["hours_vs_30d"]] for e in report["employees"]],
+            e["main_codes"], e["avg_daily_hours_30d"], e["hours_vs_30d"]] for e in report["employees"]],
           [26, 10, 8, 8, 10, 10, 12, 50, 18, 16])
-    sheet("Categories", ["Category", "Hours (est.)", "Percent"], [[c["category"], c["hours"], c["percent"]] for c in report["categories"]], [28, 14, 10])
-    sheet("Changes vs 30 days", ["Category", "Today %", "Last 30 days %", "Change (points)"],
-          [[c["category"], c["today_pct"], c["last_30d_pct"], c["change"]] for c in report["category_changes"]], [28, 12, 16, 16])
+    sheet("Costing codes", ["Code", "Description", "Hours", "Tasks", "Percent"],
+          [[c["code"], c["description"], c["hours"], c["tasks"], c["percent"]] for c in report["codes"]], [12, 50, 10, 8, 10])
+    sheet("Changes vs 30 days", ["Costing code", "Today %", "Last 30 days %", "Change (points)"],
+          [[c["label"], c["today_pct"], c["last_30d_pct"], c["change"]] for c in report["code_changes"]], [50, 12, 16, 16])
     sheet("Attention", ["Type", "Detail"], [[a["title"], a["message"]] for a in report["attention"]], [28, 110])
     sheet("Data quality", ["Employee", "Severity", "Issue", "Excel row", "File"],
           [[q["employee"], q["severity"], q["message"], q["excel_row"], q["file"]] for q in report["data_quality"]], [24, 10, 80, 10, 40])
-    ws_e = sheet("Entries", ["Employee", "Costing code", "Category", "Notes", "File type", "Completed", "Features", "Hours"],
-                 [[e["employee"], e["costing_code"], e["category"], e["notes"], e["file_type"], e["completed"], e["features"], e["hours"]] for e in report["entries"]],
+    ws_e = sheet("Entries", ["Employee", "Costing code", "Code description", "Notes", "File type", "Completed", "Features", "Hours"],
+                 [[e["employee"], e["costing_code"], e["code_description"], e["notes"], e["file_type"], e["completed"], e["features"], e["hours"]] for e in report["entries"]],
                  [24, 14, 22, 80, 14, 12, 10, 8])
     for row in ws_e.iter_rows(min_row=2, min_col=4, max_col=4):
         for c in row:
@@ -166,14 +169,14 @@ def to_csv(report: dict) -> bytes:
     for k, v in report["summary"].items():
         w.writerow([k, v])
     w.writerow([])
-    w.writerow(["Employee", "Submitted", "Hours", "Tasks", "Completed", "Incomplete", "Completion %", "Main categories", "Avg daily hours (30d)", "Hours vs 30d avg"])
+    w.writerow(["Employee", "Submitted", "Hours", "Tasks", "Completed", "Incomplete", "Completion %", "Main costing codes", "Avg daily hours (30d)", "Hours vs 30d avg"])
     for e in report["employees"]:
         w.writerow([e["employee"], "Yes" if e["submitted"] else "No", e["hours"], e["tasks"], e["completed"], e["incomplete"],
-                    e["completion_rate"], e["main_categories"], e["avg_daily_hours_30d"], e["hours_vs_30d"]])
+                    e["completion_rate"], e["main_codes"], e["avg_daily_hours_30d"], e["hours_vs_30d"]])
     w.writerow([])
-    w.writerow(["Category", "Hours (est.)", "Percent"])
-    for c in report["categories"]:
-        w.writerow([c["category"], c["hours"], c["percent"]])
+    w.writerow(["Costing code", "Description", "Hours", "Tasks", "Percent"])
+    for c in report["codes"]:
+        w.writerow([c["code"], c["description"], c["hours"], c["tasks"], c["percent"]])
     w.writerow([])
     w.writerow(["Attention", "Detail"])
     for a in report["attention"]:
@@ -199,7 +202,7 @@ def to_pdf(report: dict) -> bytes:
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
                             title=f"Daily Timesheet Report {report['date']}")
     story = [Paragraph(f"Daily Timesheet Report — {report['date']}", styles["Title"]),
-             Paragraph(f"Generated {report['generated_at']}. Figures describe what was recorded in timesheets; category hours are estimates from note lines.", small),
+             Paragraph(f"Generated {report['generated_at']}. Figures describe what was recorded in timesheets, grouped by costing code.", small),
              Spacer(1, 6)]
 
     def table(headers, rows, widths=None):
@@ -221,18 +224,20 @@ def to_pdf(report: dict) -> bytes:
         story += [Paragraph("Management attention", styles["Heading2"]),
                   table(["Type", "Detail"], [[a["title"], a["message"]] for a in report["attention"]], [45 * mm, 225 * mm])]
     story += [Paragraph("Employees", styles["Heading2"]), table(
-        ["Employee", "Submitted", "Hours", "Tasks", "Done", "Not done", "Main categories", "Avg/day 30d", "vs 30d"],
+        ["Employee", "Submitted", "Hours", "Tasks", "Done", "Not done", "Main costing codes", "Avg/day 30d", "vs 30d"],
         [[e["employee"], "Yes" if e["submitted"] else "No", e["hours"], e["tasks"], e["completed"], e["incomplete"],
-          e["main_categories"], e["avg_daily_hours_30d"], e["hours_vs_30d"]] for e in report["employees"]],
+          e["main_codes"], e["avg_daily_hours_30d"], e["hours_vs_30d"]] for e in report["employees"]],
         [45 * mm, 18 * mm, 15 * mm, 13 * mm, 13 * mm, 16 * mm, 95 * mm, 22 * mm, 18 * mm])]
-    if report["categories"]:
-        story += [Paragraph("Work distribution (estimated)", styles["Heading2"]),
-                  table(["Category", "Hours", "%"], [[c["category"], c["hours"], c["percent"]] for c in report["categories"]], [70 * mm, 25 * mm, 20 * mm])]
-    if report["category_changes"]:
+    if report["codes"]:
+        story += [Paragraph("Hours by costing code", styles["Heading2"]),
+                  table(["Code", "Description", "Hours", "Tasks", "%"],
+                        [[c["code"], c["description"], c["hours"], c["tasks"], c["percent"]] for c in report["codes"]],
+                        [22 * mm, 150 * mm, 20 * mm, 15 * mm, 15 * mm])]
+    if report["code_changes"]:
         story += [Paragraph("Change vs last 30 days", styles["Heading2"]),
-                  table(["Category", "Today %", "Last 30 days %", "Change (pts)"],
-                        [[c["category"], c["today_pct"], c["last_30d_pct"], c["change"]] for c in report["category_changes"][:8]],
-                        [70 * mm, 25 * mm, 30 * mm, 25 * mm])]
+                  table(["Costing code", "Today %", "Last 30 days %", "Change (pts)"],
+                        [[c["label"], c["today_pct"], c["last_30d_pct"], c["change"]] for c in report["code_changes"][:8]],
+                        [120 * mm, 25 * mm, 30 * mm, 25 * mm])]
     if report["anomalies"]:
         story += [Paragraph("Unusual hours", styles["Heading2"]),
                   table(["Employee", "Hours", "Recent average", "Note"],

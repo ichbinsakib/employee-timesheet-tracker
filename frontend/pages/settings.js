@@ -3,7 +3,7 @@ import { badge, esc, fmt, formValues, modal, niceDateTime, table, toast, withBus
 
 const state = { tab: 'general' };
 const TABS = [
-  ['general', 'Automation', 'viewer'], ['backups', 'Backups', 'manager'], ['rules', 'Categories & rules', 'viewer'],
+  ['general', 'Automation', 'viewer'], ['backups', 'Backups', 'manager'], ['codes', 'Costing codes', 'viewer'],
   ['users', 'Users', 'admin'], ['access', 'Access log', 'admin'], ['account', 'My account', 'viewer'], ['system', 'System', 'viewer'],
 ];
 const RANK = { viewer: 0, manager: 1, admin: 2 };
@@ -17,7 +17,7 @@ export async function render(el, ctx) {
     <div id="tab"><p class="muted">Loading…</p></div>`;
   el.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { state.tab = b.dataset.t; render(el, ctx); }));
   const box = el.querySelector('#tab');
-  const views = { general, backups, rules, users, access, account, system };
+  const views = { general, backups, codes, users, access, account, system };
   await views[state.tab](box, ctx, () => render(el, ctx));
 }
 
@@ -94,62 +94,38 @@ async function restore(name) {
   if (ok) setTimeout(() => location.reload(), 1200);
 }
 
-// ------------------------------------------------------------------ categories & rules
-async function rules(box, ctx, refresh) {
-  const [cats, rs] = await Promise.all([api.get('/api/categories'), api.get('/api/settings/rules')]);
-  const admin = ctx.user.role === 'admin';
+// ------------------------------------------------------------------ costing codes
+async function codes(box, ctx, refresh) {
+  const list = await api.get('/api/costing-codes');
+  const canEdit = ctx.user.role !== 'viewer';
+  const unlisted = list.filter(c => !c.in_list);
   box.innerHTML = `
-    <div class="card"><div class="card-head"><h2>How notes are categorised</h2>${admin ? '<button id="recl">Re-run on all past entries</button>' : ''}</div>
-      <p class="small">Each line of a timesheet's notes is checked against the keywords below. When several match, the one with the highest priority wins. Lines with no match go to <b>Uncategorized</b>. After changing rules, re-run so past entries use them too.</p></div>
-    <div class="grid cols-2">
-      <div class="card"><div class="card-head"><h2>Categories</h2>${admin ? '<button id="addcat">Add</button>' : ''}</div>
-        ${table([{ label: 'Name', render: c => esc(c.name) }, { label: 'Description', render: c => `<span class="small">${esc(c.description || '')}</span>` },
-          ...(admin ? [{ label: '', render: c => `<button class="link" data-cat="${c.id}">Edit</button>` }] : [])], cats)}</div>
-      <div class="card"><div class="card-head"><h2>Keyword rules</h2>${admin ? '<button id="addrule">Add rule</button>' : ''}</div>
-        ${table([{ label: 'Keyword', render: r => `<code>${esc(r.keyword)}</code>` }, { label: 'Category', render: r => esc(r.category) },
-          { label: 'Priority', key: 'priority', num: true }, { label: 'Active', render: r => r.active ? 'Yes' : 'No' },
-          ...(admin ? [{ label: '', render: r => `<button class="link" data-rule="${r.id}">Edit</button>` }] : [])], rs)}</div>
-    </div>`;
-  const catOptions = (sel) => cats.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
-  const editRule = async (r) => {
-    const saved = await modal(r ? 'Edit rule' : 'Add rule', `<div class="form-grid">
-        <label class="field">Keyword or phrase<input name="keyword" value="${esc(r?.keyword || '')}"></label>
-        <label class="field">Category<select name="category_id">${catOptions(r?.category_id)}</select></label>
-        <label class="field">Priority (higher wins)<input name="priority" type="number" value="${esc(r?.priority ?? 50)}"></label>
-        <label class="field">Active<select name="active"><option value="true">Yes</option><option value="false" ${r && !r.active ? 'selected' : ''}>No</option></select></label></div>`, {
-      actions: [...(r ? [{ label: 'Delete', cls: 'danger', onClick: async () => { await api.del(`/api/settings/rules/${r.id}`); return true; } }] : []), { label: 'Cancel' }, {
-        label: 'Save', cls: 'primary', onClick: async (root) => {
-          const v = formValues(root);
-          const body = { keyword: v.keyword, category_id: Number(v.category_id), priority: Number(v.priority), active: v.active === 'true' };
-          if (r) await api.put(`/api/settings/rules/${r.id}`, body); else await api.post('/api/settings/rules', body);
-          return true;
-        },
-      }],
+    <div class="card"><h2>Costing codes</h2>
+      <p class="small">Work is reported by these codes. The list and descriptions are read automatically from the
+      <b>COSTING CODE</b> sheet inside the timesheets employees send, so new codes appear by themselves.
+      ${canEdit ? 'You can change a description here; your wording is then kept even when newer timesheets arrive.' : ''}</p>
+      ${unlisted.length ? `<div class="notice warn small">${unlisted.length} code(s) used on timesheets are not in the COSTING CODE list: ${esc(unlisted.map(c => c.code).join(', '))}. Until they are added to the list, reports describe them using the latest timesheet note. Click Edit to give one a proper description.</div>` : ''}
+    </div>
+    <div class="card"><div id="codes-table">${table([
+      { label: 'Code', render: c => `<b>${esc(c.code)}</b>` },
+      { label: 'Description', render: c => c.in_list || c.description ? esc(c.description || '—')
+          : `<span class="muted">not in the COSTING CODE list</span>${c.from_notes ? `<div class="small">${esc(c.from_notes)}</div>` : ''}` },
+      { label: 'Source', render: c => c.source === 'manual' ? badge('edited here', 'info') : c.source ? 'timesheet' : '—' },
+      { label: 'Entries', key: 'entries', num: true },
+      { label: 'Hours', num: true, render: c => esc(fmt(c.hours, 2)) },
+      { label: '', render: c => `${c.entries ? `<a href="#/timesheets?code=${encodeURIComponent(c.code)}">entries</a>` : ''}${canEdit ? ` <button class="link" data-code="${esc(c.code)}">Edit</button>` : ''}` },
+    ], list, { empty: 'No costing codes yet. They are loaded from the first timesheet that contains a COSTING CODE sheet.' })}</div></div>`;
+  box.querySelectorAll('[data-code]').forEach(b => b.addEventListener('click', async () => {
+    const c = list.find(x => x.code === b.dataset.code);
+    const saved = await modal(`Costing code ${c.code}`, `
+      <label class="field">Description<input name="description" value="${esc(c.description || '')}"></label>`, {
+      actions: [{ label: 'Cancel' }, { label: 'Save', cls: 'primary', onClick: async (root) => {
+        await api.put(`/api/costing-codes/${encodeURIComponent(c.code)}`, { description: root.querySelector('[name=description]').value });
+        return true;
+      } }],
     });
     if (saved) refresh();
-  };
-  const editCat = async (c) => {
-    const saved = await modal(c ? 'Edit category' : 'Add category', `<div class="form-grid">
-        <label class="field">Name<input name="name" value="${esc(c?.name || '')}"></label>
-        <label class="field">Description<input name="description" value="${esc(c?.description || '')}"></label></div>`, {
-      actions: [...(c ? [{ label: 'Delete', cls: 'danger', onClick: async () => { await api.del(`/api/settings/categories/${c.id}`); return true; } }] : []), { label: 'Cancel' }, {
-        label: 'Save', cls: 'primary', onClick: async (root) => {
-          const v = formValues(root);
-          if (c) await api.put(`/api/settings/categories/${c.id}`, v); else await api.post('/api/settings/categories', v);
-          return true;
-        },
-      }],
-    });
-    if (saved) refresh();
-  };
-  box.querySelector('#addrule')?.addEventListener('click', () => editRule(null));
-  box.querySelector('#addcat')?.addEventListener('click', () => editCat(null));
-  box.querySelectorAll('[data-rule]').forEach(b => b.addEventListener('click', () => editRule(rs.find(r => r.id === Number(b.dataset.rule)))));
-  box.querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => editCat(cats.find(c => c.id === Number(b.dataset.cat)))));
-  box.querySelector('#recl')?.addEventListener('click', (e) => withBusy(e.currentTarget, async () => {
-    const r = await api.post('/api/settings/reclassify');
-    toast(`Re-categorised ${r.activities} activity lines.`);
-  }).catch(err => toast(err.message, true)));
+  }));
 }
 
 // ------------------------------------------------------------------ users

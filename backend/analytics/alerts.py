@@ -20,7 +20,7 @@ def build_alerts(db: Session, day: date, lookback_days: int = 7, now: datetime |
     now = now or datetime.now()
     start = day - timedelta(days=lookback_days - 1)
     alerts: list[dict] = []
-    cats = kpi.categories(db)
+    cats = kpi.codes(db)
 
     # Missing timesheets
     for m in kpi.missing_timesheets(db, start, day, now=now):
@@ -40,17 +40,17 @@ def build_alerts(db: Session, day: date, lookback_days: int = 7, now: datetime |
             msg = f"{a['employee']} recorded {a['hours']:g} hours on {a['date']}."
         alerts.append(_a("unusual_hours", "info", "Unusual hours", msg, a["employee_id"], a["date"]))
 
-    # Category change and incomplete work, per employee (period vs previous period of same length)
+    # Costing-code change and incomplete work, per employee (period vs previous period of same length)
     ds = kpi.load(db, start, day)
     for emp in db.scalars(select(Employee).where(Employee.active.is_(True))):
         cur = kpi.summarize(ds, cats, emp.id)
         if not cur["task_count"]:
             continue
         base = kpi.baseline(db, cats, start, day, emp.id)
-        for shift in kpi.category_shifts(cur, base)[:2]:
+        for shift in kpi.code_shifts(cur, base)[:2]:
             direction = "increased" if shift["change"] > 0 else "decreased"
-            alerts.append(_a("category_change", "info", "Category change",
-                             f"{emp.name}: {shift['category']} work {direction} from {shift['previous_pct']:g}% to {shift['current_pct']:g}% "
+            alerts.append(_a("code_change", "info", "Costing code change",
+                             f"{emp.name}: share of hours on {shift['label']} {direction} from {shift['previous_pct']:g}% to {shift['current_pct']:g}% "
                              f"(last {lookback_days} days vs the {lookback_days} days before).", emp.id, None))
         if cur["incomplete_tasks"] >= INCOMPLETE_ALERT_MIN:
             alerts.append(_a("incomplete", "info", "Incomplete work",

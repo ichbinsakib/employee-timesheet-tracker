@@ -104,11 +104,26 @@ def mark_interrupted_jobs() -> None:
             run.message = "Interrupted: the app stopped while this was running."
 
 
+def backfill_costing_codes() -> None:
+    """After upgrading: learn costing codes from timesheet files received before the list existed."""
+    from backend.models import CostingCode
+    from backend.services import costing_codes
+    try:
+        with session_scope() as db:
+            if db.scalar(select(CostingCode.code).limit(1)) is None:
+                n = costing_codes.backfill_from_saved_files(db)
+                if n:
+                    log.info("Loaded %s costing codes from received timesheets", n)
+    except Exception:  # noqa: BLE001
+        log.exception("Costing code backfill failed")
+
+
 def start() -> None:
     global scheduler
     if scheduler is not None:
         return
     mark_interrupted_jobs()
+    backfill_costing_codes()
     scheduler = BackgroundScheduler(job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600})
     scheduler.start()
     reschedule()

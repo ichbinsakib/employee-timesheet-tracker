@@ -5,14 +5,18 @@
 | Task | How |
 |---|---|
 | Start (visible window) | double-click `start.bat` |
-| Stop | close that window, or double-click `stop.bat` |
+| Stop | close that window, or double-click `stop.bat` (also pauses the automatic start) |
+| Resume automatic start after `stop.bat` | double-click `scriptsesume_startup.bat` |
 | Start automatically, hidden, at your Windows sign-in | `powershell -ExecutionPolicy Bypass -File scripts\install_startup.ps1` |
 | …at boot, before anyone signs in (as Administrator) | `… scripts\install_startup.ps1 -AtBoot` |
 | Remove automatic start | `… scripts\uninstall_startup.ps1` |
 
-The startup task runs `pythonw.exe run_server.py` from the project folder, restarts it
-if it stops (every minute, indefinitely), and never times out. Only one instance can run:
-if port 8000 is already in use, a second start exits quietly.
+The startup task runs `pythonw.exe run_server.py` from the project folder at sign-in
+(or boot) and, as a watchdog, **every 5 minutes**: if the app has stopped for any reason,
+it is started again within 5 minutes (tested: stopped at 14:42:48, back at 14:43:48).
+Only one instance can run — if port 8000 is already in use, the extra start exits at once.
+`stop.bat` disables the task so the watchdog does not bring the app straight back;
+`scriptsesume_startup.bat` turns it back on.
 
 One process does everything: the web app, the Gmail check, backups and daily reports.
 **Closing Chrome does not stop anything.**

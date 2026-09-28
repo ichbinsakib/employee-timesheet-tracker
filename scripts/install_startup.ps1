@@ -4,7 +4,9 @@ Runs the Timesheet Tracker automatically, hidden, whenever Windows starts.
     powershell -ExecutionPolicy Bypass -File scripts\install_startup.ps1            # at your sign-in (no admin needed)
     powershell -ExecutionPolicy Bypass -File scripts\install_startup.ps1 -AtBoot    # at boot, before anyone signs in (run as Administrator)
 
-The task restarts the app if it stops unexpectedly. Remove with scripts\uninstall_startup.ps1.
+The task also re-checks every 5 minutes and starts the app again if it has stopped
+(a second copy exits at once when the app is already running).
+stop.bat pauses this; scripts\resume_startup.bat resumes it. Remove with scripts\uninstall_startup.ps1.
 #>
 param([switch]$AtBoot)
 . "$PSScriptRoot\_common.ps1"
@@ -25,6 +27,10 @@ if ($AtBoot) {
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 }
+# Watchdog: a second trigger that fires every 5 minutes, indefinitely. Windows' own
+# "restart on failure" only covers a task that fails to start, not an app that stops later.
+$watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+$trigger = @($trigger, $watchdog)
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
     -Description "Employee Timesheet Tracker: web app, Gmail sync, backups and daily reports." -Force | Out-Null

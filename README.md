@@ -49,7 +49,7 @@ set TIMESHEET_PORT=8765
 | Page | What you see |
 |---|---|
 | **Dashboard** | Today: expected / received / missing, hours, tasks, completed / incomplete · alerts · employee overview · work distribution · trends. **Sync Gmail Now** button. |
-| **Employees** | Everyone, editable (email, department, working days, deadline). Click a person for hours, averages, completion, categories, daily trend, recent entries, comparison with the previous period, data-quality and anomaly alerts. |
+| **Employees** | Everyone, editable (email, department, working days, deadline). **Import employees…** takes a CSV/Excel export (e.g. from the HR system): headers `full_name`/`name`, optional `email`, `department`, `designation`, `status`; shows a preview before saving; matches by email then name and keeps old spellings as aliases. Click a person for hours, averages, completion, categories, daily trend, recent entries, comparison with the previous period, data-quality and anomaly alerts. |
 | **Timesheets** | Every entry, filterable by date, person, category, completion and text. Click an entry to see how each note line was categorised. |
 | **Analytics** | Period KPIs, category distribution and weekly heatmap, repeated activities, unusual hours, missing timesheets, data quality. |
 | **Reports** | Daily management report on screen and as **Excel, CSV, PDF**. Saved automatically every day. |

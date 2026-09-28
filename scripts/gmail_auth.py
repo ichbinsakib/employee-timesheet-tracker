@@ -1,4 +1,4 @@
-"""Authorise read-only Gmail access. Run on the desktop: scripts\gmail_auth.bat"""
+"""Authorise read-only Gmail access. Run on the desktop: scripts/gmail_auth.bat"""
 import sys
 from pathlib import Path
 

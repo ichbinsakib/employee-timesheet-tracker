@@ -1,7 +1,7 @@
 """Create tables and seed default categories, classification rules and settings."""
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 
 from backend.config import settings
 from backend.database.session import get_engine, session_scope
@@ -90,8 +90,24 @@ def init_db(seed: bool = True) -> None:
     settings.ensure_dirs()
     engine = get_engine()
     Base.metadata.create_all(engine)
+    add_missing_columns(engine)
     if seed:
         seed_defaults()
+
+
+def add_missing_columns(engine) -> None:
+    """Lightweight schema upgrade: create_all() makes new tables but never adds columns
+    to existing ones, so add any nullable column a model has gained since the DB was created."""
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in existing and col.nullable:
+                    ddl_type = col.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl_type}'))
 
 
 def seed_defaults() -> None:

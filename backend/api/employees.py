@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from backend.api.common import parse_range
 from backend.auth.deps import require_manager, require_viewer
 from backend.database.session import get_db
 from backend.models import Employee, TimesheetEntry, WorkCategory
+from backend.services.employee_import import EmployeeImportError, import_employees
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
 
@@ -72,6 +73,24 @@ def create_employee(body: EmployeeIn, db: Session = Depends(get_db)):
     db.add(e)
     db.commit()
     return employee_out(e)
+
+
+@router.post("/import", dependencies=[Depends(require_manager)])
+async def import_file(apply: bool = False, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Preview (apply=false, nothing saved) or apply an employee list from CSV/Excel."""
+    content = await file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(413, "File is larger than 5 MB.")
+    try:
+        result = import_employees(db, content, file.filename or "employees.csv")
+    except EmployeeImportError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc))
+    if apply:
+        db.commit()
+    else:
+        db.rollback()
+    return {"applied": apply, **result.as_dict()}
 
 
 @router.put("/{employee_id}", dependencies=[Depends(require_manager)])

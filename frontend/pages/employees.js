@@ -11,7 +11,9 @@ export async function render(el, ctx) {
   if (!ctx.isCurrent()) return;
   const canEdit = ctx.user.role !== 'viewer';
   el.innerHTML = `
-    <div class="page-head"><h1>Employees</h1>${canEdit ? '<button class="primary" id="add">Add employee</button>' : ''}</div>
+    <div class="page-head"><h1>Employees</h1>${canEdit ? `<div class="toolbar">
+        <label class="btn" title="CSV or Excel with a name column; email, department, designation and status are optional">Import employees…<input type="file" id="import" accept=".csv,.xlsx,.xlsm" class="hidden"></label>
+        <button class="primary" id="add">Add employee</button></div>` : ''}</div>
     <div class="card">
       <p class="muted small">Employees are also added automatically when a timesheet arrives with a new name. Check their details afterwards.</p>
       <div id="tbl">${table([
@@ -31,6 +33,41 @@ export async function render(el, ctx) {
     if (await editEmployee(row)) render(el, ctx);
   }));
   el.querySelector('#add')?.addEventListener('click', async () => { if (await editEmployee(null)) render(el, ctx); });
+  el.querySelector('#import')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file && await importEmployees(file)) render(el, ctx);
+  });
+}
+
+// Two steps: preview (nothing saved), then apply.
+async function importEmployees(file) {
+  let preview;
+  try { preview = await api.upload('/api/employees/import?apply=false', file); }
+  catch (err) { toast(err.message, true); return false; }
+  const nothing = !preview.created.length && !preview.updated.length && !preview.deactivated.length && !preview.reactivated.length;
+  const list = (title, items, render = esc) => items.length
+    ? `<h3 style="margin-top:14px">${esc(title)} (${items.length})</h3><ul class="small">${items.map(i => `<li>${render(i)}</li>`).join('')}</ul>` : '';
+  const body = `
+    <p class="small muted">${esc(file.name)} · ${preview.rows} row(s) · columns found: ${esc(preview.columns.join(', '))}. Nothing has been saved yet.</p>
+    ${nothing ? '<div class="notice">No changes: everyone in the file already matches the app.</div>' : ''}
+    ${list('New employees', preview.created)}
+    ${list('Updated', preview.updated, u => `<b>${esc(u.name)}</b>: ${esc(u.changes.join('; '))}`)}
+    ${list('Will be marked inactive', preview.deactivated)}
+    ${list('Will be reactivated', preview.reactivated)}
+    ${list('Skipped rows', preview.skipped, s => `Row ${esc(s.row)}: ${esc(s.reason)}`)}
+    ${preview.unchanged.length ? `<p class="small muted" style="margin-top:10px">Unchanged: ${esc(preview.unchanged.join(', '))}</p>` : ''}
+    <p class="small muted" style="margin-top:10px">Working days, hours and deadlines are only changed if the file has those columns.</p>`;
+  return modal('Import employees – preview', body, {
+    wide: true,
+    actions: [{ label: 'Cancel' }, ...(nothing ? [] : [{
+      label: 'Apply import', cls: 'primary', onClick: async () => {
+        const r = await api.upload('/api/employees/import?apply=true', file);
+        toast(`Imported: ${r.created.length} added, ${r.updated.length} updated, ${r.deactivated.length} marked inactive.`);
+        return true;
+      },
+    }])],
+  });
 }
 
 export async function editEmployee(emp) {

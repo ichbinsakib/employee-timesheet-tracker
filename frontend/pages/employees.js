@@ -129,7 +129,7 @@ async function renderDetail(el, ctx, id) {
     ${tiles([
       { label: 'Total hours', value: fmt(s.total_hours, 2) },
       { label: 'Average daily hours', value: fmt(s.avg_daily_hours, 2), sub: `${s.days_submitted} day(s) submitted` },
-      { label: 'Tasks', value: fmt(s.task_count), sub: `${s.activity_count} activity line(s)` },
+      { label: 'Tasks', value: fmt(s.task_count), sub: s.zero_hour_rows ? `${s.zero_hour_rows} row(s) with 0 hours not counted` : `${s.activity_count} activity line(s)` },
       { label: 'Completion', value: s.completion_rate === null ? '—' : pct(s.completion_rate), sub: `${s.completed_tasks} yes · ${s.incomplete_tasks} no · ${s.completion_not_recorded} not recorded` },
       { label: 'Average hours per task', value: fmt(s.avg_hours_per_task, 2) },
       { label: 'Hours per feature', value: fmt(s.hours_per_feature, 2), sub: s.feature_total ? `${s.feature_total} features on ${s.feature_tasks} task(s)` : 'no feature counts recorded' },

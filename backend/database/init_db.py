@@ -21,6 +21,7 @@ DEFAULT_CATEGORIES: dict[str, tuple[str, str]] = {
     "Administrative": ("Approvals, IT tickets, filing and general admin", "#b4235a"),
     "Data Entry & Reporting": ("Entering data, updating sheets, analysis and reports", "#6b7280"),
     "Quality & RMA": ("Quality checks, inspections, returns (RMA) and NCRs", "#a16207"),
+    "HR & Payroll": ("Timesheets, attendance, payroll, employee records and HR reporting", "#7c3aed"),
     UNCATEGORIZED: ("Notes that matched no keyword rule", "#9ca3af"),
 }
 
@@ -71,6 +72,12 @@ DEFAULT_RULES: list[tuple[str, str, int]] = [
     # Quality
     ("rma", "Quality & RMA", 80), ("quality", "Quality & RMA", 70),
     ("inspection", "Quality & RMA", 70), ("ncr", "Quality & RMA", 80), ("defect", "Quality & RMA", 70),
+    # HR & payroll (outrank the generic Administrative "timesheet" rule)
+    ("payroll", "HR & Payroll", 80), ("attendance", "HR & Payroll", 75), ("timesheet", "HR & Payroll", 70),
+    ("hierarchy", "HR & Payroll", 70), ("surveillance", "HR & Payroll", 65), ("employee", "HR & Payroll", 50),
+    ("human resources", "HR & Payroll", 75), ("salary", "HR & Payroll", 75),
+    ("overtime", "HR & Payroll", 65), ("leave", "HR & Payroll", 45), ("recruit", "HR & Payroll", 70),
+    ("onboarding", "HR & Payroll", 70), ("checklist", "HR & Payroll", 45),
 ]
 
 DEFAULT_APP_SETTINGS: dict[str, str] = {
@@ -113,16 +120,20 @@ def add_missing_columns(engine) -> None:
 def seed_defaults() -> None:
     with session_scope() as db:
         existing = {c.name: c for c in db.scalars(select(WorkCategory))}
+        added: set[str] = set()
         for name, (desc, color) in DEFAULT_CATEGORIES.items():
             if name not in existing:
                 cat = WorkCategory(name=name, description=desc, color=color)
                 db.add(cat)
                 existing[name] = cat
+                added.add(name)
         db.flush()
 
-        # Only seed rules on a brand-new database, so user edits are never overwritten.
-        if db.scalar(select(ClassificationRule.id).limit(1)) is None:
-            for keyword, cat_name, priority in DEFAULT_RULES:
+        # All default rules on a brand-new database; on an existing one only the rules of
+        # categories added by an upgrade, so the user's own rule edits are never overwritten.
+        fresh = db.scalar(select(ClassificationRule.id).limit(1)) is None
+        for keyword, cat_name, priority in DEFAULT_RULES:
+            if fresh or cat_name in added:
                 db.add(ClassificationRule(keyword=keyword, category_id=existing[cat_name].id, priority=priority))
 
         have = set(db.scalars(select(AppSetting.key)))

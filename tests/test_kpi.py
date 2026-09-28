@@ -81,3 +81,28 @@ def test_day_status_pending_vs_missing(db, tmp_xlsx):
     assert before["expected"] == 2 and len(before["pending"]) == 2 and not before["missing"]
     after = kpi.day_status(db, day, now=datetime(2026, 9, 28, 19, 0))
     assert len(after["missing"]) == 2
+
+
+def test_zero_hour_rows_are_not_tasks(db, tmp_xlsx):
+    _add(db, tmp_xlsx, "Zed Zero", MON, [("P1", "Worked item", "/", "/", "/", 6), ("P2", "Standing item", "/", "/", "/", 0),
+                                         ("P3", "Another standing item", "/", "/", "/", 0)])
+    s = kpi.summarize(kpi.load(db, MON, MON), kpi.categories(db))
+    assert s["task_count"] == 1 and s["zero_hour_rows"] == 2
+    assert s["avg_hours_per_task"] == 6 and s["total_hours"] == 6
+
+
+def test_upgrade_adds_new_category_rules_without_touching_edits(db):
+    from backend.database.init_db import seed_defaults
+    from backend.models import ClassificationRule, WorkCategory
+    hr = db.query(WorkCategory).filter_by(name="HR & Payroll").one()
+    # simulate a database created before the category existed, with a user-edited rule
+    db.query(ClassificationRule).filter_by(category_id=hr.id).delete()
+    db.delete(hr)
+    rule = db.query(ClassificationRule).filter_by(keyword="kanban").one()
+    rule.priority = 99
+    db.commit()
+    seed_defaults()
+    db.expire_all()
+    hr = db.query(WorkCategory).filter_by(name="HR & Payroll").one()
+    assert db.query(ClassificationRule).filter_by(category_id=hr.id, keyword="payroll").count() == 1
+    assert db.query(ClassificationRule).filter_by(keyword="kanban").one().priority == 99

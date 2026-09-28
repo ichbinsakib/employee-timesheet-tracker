@@ -51,11 +51,10 @@ def split_notes(notes: str | None) -> SplitNotes:
     lines = [ln.strip() for ln in notes.split("\n") if ln.strip()]
     bullet_idx = [i for i, ln in enumerate(lines) if BULLET.match(ln)]
     if not bullet_idx:
-        # No bullets: one line = one activity; several lines = several activities
-        if len(lines) == 1:
-            return SplitNotes(None, lines)
-        parts = [p.strip() for p in re.split(r"[;\n]", notes) if p.strip()]
-        return SplitNotes(None, parts)
+        # No bullets: the whole note describes ONE task, even over several lines
+        # ("Complete daily entry of timesheets -" / "In house - 84 Pages" / "Overseas - 62 Pages").
+        joined = " ".join(ln.rstrip(" -–—") for ln in lines)
+        return SplitNotes(None, [re.sub(r"\s+", " ", joined).strip()])
     title_lines = lines[: bullet_idx[0]]
     activities: list[str] = []
     for ln in lines[bullet_idx[0]:]:

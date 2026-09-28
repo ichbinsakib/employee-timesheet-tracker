@@ -12,7 +12,7 @@ from backend.config import settings
 from backend.database.session import get_db
 from backend.gmail import client as gmail_client
 from backend.models import DataQualityIssue, Employee, GmailMessage, JobRun, Submission
-from backend.services.importer import ImportContext, import_file, sha256, store_file
+from backend.services.importer import ImportContext, import_file, retry_submission, sha256, store_file
 from backend.services.scheduler import job_gmail_sync, next_runs
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
@@ -110,6 +110,39 @@ def submission_file(submission_id: int, db: Session = Depends(get_db)):
     if not path.is_relative_to(settings.imports_dir.resolve()) or not path.exists():
         raise HTTPException(404, "File not available")
     return FileResponse(path, filename=Path(s.attachment_filename.split(" [")[0]).name)
+
+
+@router.post("/submissions/{submission_id}/retry", dependencies=[Depends(require_manager)])
+def retry_one(submission_id: int, db: Session = Depends(get_db)):
+    s = db.get(Submission, submission_id)
+    if s is None:
+        raise HTTPException(404, "Submission not found")
+    try:
+        result = retry_submission(db, s)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    db.commit()
+    names = {e.id: e.name for e in db.scalars(select(Employee))}
+    return [submission_out(x, names.get(x.employee_id)) | {"issues": _issues(x)} for x in result]
+
+
+@router.post("/retry-failed", dependencies=[Depends(require_manager)])
+def retry_all_failed(db: Session = Depends(get_db)):
+    """Re-read every failed import whose file is still on disk."""
+    fixed, still_failed, missing = 0, 0, 0
+    for s in list(db.scalars(select(Submission).where(Submission.import_status == "failed"))):
+        try:
+            result = retry_submission(db, s)
+        except ValueError:
+            missing += 1
+            continue
+        if all(x.import_status == "failed" for x in result):
+            still_failed += 1
+        else:
+            fixed += 1
+    db.commit()
+    return {"fixed": fixed, "still_failed": still_failed, "file_missing": missing,
+            "message": f"{fixed} import(s) fixed, {still_failed} still failing, {missing} without a saved file."}
 
 
 @router.delete("/submissions/{submission_id}", dependencies=[Depends(require_admin)])

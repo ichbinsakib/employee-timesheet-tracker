@@ -158,19 +158,42 @@ def _match_column(header: str) -> str | None:
     return None
 
 
-def _find_header(grid: list[list[Any]]) -> tuple[int | None, dict[str, int]]:
-    best_row, best_cols = None, {}
-    for r_idx, row in enumerate(grid[:60]):
-        cols: dict[str, int] = {}
-        for c_idx, value in enumerate(row):
-            canonical = _match_column(norm_text(value))
-            if canonical and canonical not in cols:
-                cols[canonical] = c_idx
-        if len(cols) > len(best_cols):
-            best_row, best_cols = r_idx, cols
-    if len(best_cols) >= REQUIRED_FOR_HEADER and "burden_hours" in best_cols:
-        return best_row, best_cols
-    return None, {}
+def _score_header(texts: list[str]) -> dict[str, int]:
+    cols: dict[str, int] = {}
+    for c_idx, text in enumerate(texts):
+        canonical = _match_column(text)
+        if canonical and canonical not in cols:
+            cols[canonical] = c_idx
+    return cols
+
+
+def _find_header(grid: list[list[Any]]) -> tuple[int | None, int | None, dict[str, int]]:
+    """Return (first header row, last header row, columns).
+
+    Headings may be stacked over two rows ("COSTING" / "CODE", "Burden" / "Hours"),
+    so each row is scored alone and joined with the row below it; the best wins.
+    """
+    best: tuple[int | None, int | None, dict[str, int]] = (None, None, {})
+    texts = [[norm_text(v) for v in row] for row in grid[:60]]
+    singles = [_score_header(t) for t in texts]
+    for r_idx, single in enumerate(texts):
+        if len(singles[r_idx]) > len(best[2]):
+            best = (r_idx, r_idx, singles[r_idx])
+        if r_idx + 1 >= len(texts):
+            continue
+        below = texts[r_idx + 1]
+        width = max(len(single), len(below))
+        joined = [" ".join(filter(None, (single[i] if i < len(single) else "", below[i] if i < len(below) else "")))
+                  for i in range(width)]
+        cols = _score_header(joined)
+        # Only a genuine two-row heading: joining must recognise more columns than either row alone
+        # (otherwise a "Name ... Date" row above a normal header would be swallowed into it).
+        if len(cols) > max(len(singles[r_idx]), len(singles[r_idx + 1])) and len(cols) > len(best[2]):
+            best = (r_idx, r_idx + 1, cols)
+    first, last, cols = best
+    if len(cols) >= REQUIRED_FOR_HEADER and "burden_hours" in cols:
+        return first, last, cols
+    return None, None, {}
 
 
 TITLE_WORDS = re.compile(r"\b(sheet|timesheet|form|report|production|template)\b", re.I)
@@ -223,7 +246,7 @@ def _labelled_value(grid: list[list[Any]], label_patterns: list[str], stop_row: 
 
 def parse_sheet(ws) -> ParsedSheet | None:
     grid = [list(r) for r in ws.iter_rows(values_only=True)]
-    header_idx, cols = _find_header(grid)
+    header_idx, header_last, cols = _find_header(grid)
     if header_idx is None:
         return None
 
@@ -238,7 +261,7 @@ def parse_sheet(ws) -> ParsedSheet | None:
         idx = cols.get(key)
         return row[idx] if idx is not None and idx < len(row) else None
 
-    for r_idx in range(header_idx + 1, len(grid)):
+    for r_idx in range(header_last + 1, len(grid)):
         row = grid[r_idx]
         texts = [norm_text(v) for v in row]
         if not any(texts):

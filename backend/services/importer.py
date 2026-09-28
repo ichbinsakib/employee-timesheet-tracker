@@ -194,12 +194,7 @@ def _import_sheet(db: Session, sub: Submission, sheet: ParsedSheet, ctx: ImportC
             burden_hours=row.burden_hours, original_excel_row=row.excel_row, sheet_name=sheet.sheet_name,
         )
         db.add(entry)
-        activities = split.activities or ([split.title] if split.title else [])
-        share = (row.burden_hours or 0) / len(activities) if activities else 0
-        for pos, text in enumerate(activities):
-            entry.activities.append(EntryActivity(
-                position=pos, text=text[:2000], normalized=normalize_activity(text), allocated_hours=round(share, 4),
-            ))
+        _build_activities(entry, split)
         _classify_entry(entry, classifier)
 
     sub.entry_count = len(validated.rows)
@@ -246,11 +241,56 @@ def _classify_entry(entry: TimesheetEntry, classifier: Classifier) -> None:
         entry.primary_category_id = classifier.uncategorized_id
 
 
+def _build_activities(entry: TimesheetEntry, split) -> None:
+    """One activity per bullet line (or one for the whole note); hours split evenly."""
+    activities = split.activities or ([split.title] if split.title else [])
+    share = (entry.burden_hours or 0) / len(activities) if activities else 0
+    for pos, text in enumerate(activities):
+        entry.activities.append(EntryActivity(
+            position=pos, text=text[:2000], normalized=normalize_activity(text), allocated_hours=round(share, 4),
+        ))
+
+
 def reclassify_all(db: Session) -> int:
-    """Re-run classification on every stored activity (after rules change)."""
+    """Rebuild every entry's activity lines from its notes and classify them again
+    (after the rules or the note-splitting logic change)."""
     classifier = Classifier(db)
     count = 0
     for entry in db.scalars(select(TimesheetEntry)):
+        for act in list(entry.activities):
+            db.delete(act)
+        entry.activities.clear()
+        db.flush()
+        split = split_notes(entry.notes)
+        entry.title = split.title
+        _build_activities(entry, split)
         _classify_entry(entry, classifier)
         count += len(entry.activities)
     return count
+
+
+def retry_submission(db: Session, sub: Submission) -> list[Submission]:
+    """Re-run a failed import from the saved copy of its file (e.g. after the reader improved).
+
+    The failed record is removed only when the retry produced a result; otherwise it stays.
+    """
+    if sub.import_status != "failed":
+        raise ValueError("Only failed imports can be retried.")
+    if not sub.stored_path or not Path(sub.stored_path).exists():
+        raise ValueError("The original file is no longer on disk; ask for the timesheet again or upload it.")
+    content = Path(sub.stored_path).read_bytes()
+    filename = sub.attachment_filename.split(" [")[0]
+    ctx = ImportContext(filename=filename, source=sub.source, gmail_message_id=sub.gmail_message_id,
+                        sender_email=sub.sender_email, subject=sub.subject, email_timestamp=sub.email_timestamp)
+    old_id = sub.id
+    # the failed record shares the file hash but is ignored by the duplicate check, so re-import is safe
+    new = import_file(db, content, ctx, Path(sub.stored_path))
+    db.flush()
+    if all(s.import_status == "failed" for s in new):
+        for s in new:
+            db.delete(s)  # still failing: keep the original record, drop the new copy
+        db.flush()
+        return [db.get(Submission, old_id)]
+    db.delete(db.get(Submission, old_id))
+    db.flush()
+    return new

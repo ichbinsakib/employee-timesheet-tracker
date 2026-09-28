@@ -68,6 +68,7 @@ async function showEntry(row) {
       { label: 'Activity', render: a => esc(a.text) },
       { label: 'Category', render: a => esc(a.category || '—') },
       { label: 'Matched keyword', render: a => a.keyword ? `<code>${esc(a.keyword)}</code>` : '<span class="muted">none</span>' },
-      { label: 'Est. hours', key: 'hours', num: true },
-    ], e.activities)}`, { wide: true });
+      { label: 'Est. hours', num: true, render: a => esc(fmt(a.hours, 2)) },
+    ], e.activities)}
+    ${e.activities.length > 1 ? `<p class="small muted">Total: ${esc(fmt(e.activities.reduce((t, a) => t + a.hours, 0), 2))} h (row total ${esc(fmt(e.hours, 2))} h)</p>` : ''}`, { wide: true });
 }

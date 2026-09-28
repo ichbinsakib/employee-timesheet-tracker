@@ -58,7 +58,7 @@ def entry_detail(entry_id: int, db: Session = Depends(get_db)):
     out["file"] = x.submission.attachment_filename
     out["activities"] = [
         {"text": a.text, "category": cats[a.category_id].name if a.category_id in cats else None,
-         "keyword": a.matched_keyword, "hours": round(a.allocated_hours, 2)}
+         "keyword": a.matched_keyword, "hours": round(a.allocated_hours, 4)}
         for a in sorted(x.activities, key=lambda a: a.position)
     ]
     return out

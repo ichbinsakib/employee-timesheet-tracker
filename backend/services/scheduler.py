@@ -95,10 +95,20 @@ def catch_up() -> None:
 
 
 # --------------------------------------------------------------------------- scheduler control
+def mark_interrupted_jobs() -> None:
+    """Jobs still 'running' from a previous process were cut off when the app stopped."""
+    from backend.models import JobRun
+    with session_scope() as db:
+        for run in db.scalars(select(JobRun).where(JobRun.status == "running")):
+            run.status, run.finished_at = "error", now()
+            run.message = "Interrupted: the app stopped while this was running."
+
+
 def start() -> None:
     global scheduler
     if scheduler is not None:
         return
+    mark_interrupted_jobs()
     scheduler = BackgroundScheduler(job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600})
     scheduler.start()
     reschedule()

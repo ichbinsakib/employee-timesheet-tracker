@@ -54,8 +54,11 @@ class ActivityRow:
 class Dataset:
     start: date
     end: date
-    entries: list[EntryRow] = field(default_factory=list)
+    entries: list[EntryRow] = field(default_factory=list)  # rows with hours > 0 (counted as tasks)
     activities: list[ActivityRow] = field(default_factory=list)
+    # Rows with 0 (or no) hours: standing items listed but not worked that day. Kept out of
+    # task counts and averages so they do not inflate "tasks" or shrink "hours per task".
+    zero_hour_entries: list[EntryRow] = field(default_factory=list)
 
 
 def load(db: Session, start: date, end: date, employee_id: int | None = None) -> Dataset:
@@ -67,7 +70,8 @@ def load(db: Session, start: date, end: date, employee_id: int | None = None) ->
     if employee_id:
         q = q.where(TimesheetEntry.employee_id == employee_id)
     for r in db.execute(q):
-        ds.entries.append(EntryRow(r[0], r[1], r[2], float(r[3] or 0), r[4], r[5], r[6]))
+        row = EntryRow(r[0], r[1], r[2], float(r[3] or 0), r[4], r[5], r[6])
+        (ds.entries if row.hours > 0 else ds.zero_hour_entries).append(row)
 
     aq = select(
         EntryActivity.entry_id, TimesheetEntry.employee_id, TimesheetEntry.work_date, EntryActivity.category_id,
@@ -77,7 +81,8 @@ def load(db: Session, start: date, end: date, employee_id: int | None = None) ->
     if employee_id:
         aq = aq.where(TimesheetEntry.employee_id == employee_id)
     for r in db.execute(aq):
-        ds.activities.append(ActivityRow(r[0], r[1], r[2], r[3], float(r[4] or 0), r[5], r[6]))
+        if float(r[4] or 0) > 0:  # lines of 0-hour rows are not work done that day
+            ds.activities.append(ActivityRow(r[0], r[1], r[2], r[3], float(r[4] or 0), r[5], r[6]))
     return ds
 
 
@@ -128,6 +133,7 @@ def summarize(ds: Dataset, cats: dict[int, WorkCategory], employee_id: int | Non
         "days_submitted": len(days),
         "avg_daily_hours": _r(total_hours / len(days)) if days else None,
         "task_count": len(entries),
+        "zero_hour_rows": sum(1 for e in ds.zero_hour_entries if employee_id is None or e.employee_id == employee_id),
         "activity_count": len(acts),
         "completed_tasks": completed,
         "incomplete_tasks": incomplete,

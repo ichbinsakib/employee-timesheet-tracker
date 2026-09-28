@@ -61,3 +61,11 @@ def test_split_notes():
     assert s.title == "Co-ordination task"
     assert s.activities == ["SO Release", "Kanban checking continued"]
     assert split_notes("Just one thing").activities == ["Just one thing"]
+
+
+def test_unbulleted_multiline_note_is_one_task():
+    s = split_notes("Complete daily entry of In House & Overseas employees' timesheets into CAMCO server -\n"
+                    "In house - 84 Pages\nOverseas - 62 Pages")
+    assert s.title is None
+    assert s.activities == ["Complete daily entry of In House & Overseas employees' timesheets into CAMCO server "
+                            "In house - 84 Pages Overseas - 62 Pages"]

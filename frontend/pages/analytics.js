@@ -25,7 +25,7 @@ export async function render(el, ctx) {
     ${tiles([
       { label: 'Total hours', value: fmt(s.total_hours, 2) },
       { label: 'Average daily hours', value: fmt(s.avg_daily_hours, 2), sub: `${s.days_submitted} employee-day(s)` },
-      { label: 'Tasks', value: fmt(s.task_count) },
+      { label: 'Tasks', value: fmt(s.task_count), sub: s.zero_hour_rows ? `${s.zero_hour_rows} row(s) with 0 hours not counted` : '' },
       { label: 'Completion rate', value: s.completion_rate === null ? '—' : pct(s.completion_rate), sub: `${s.completion_not_recorded} not recorded` },
       { label: 'Avg hours per task', value: fmt(s.avg_hours_per_task, 2) },
       { label: 'Administrative', value: pct(s.admin_pct), sub: 'of hours (est.)' },

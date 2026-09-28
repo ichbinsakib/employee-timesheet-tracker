@@ -15,7 +15,7 @@ export async function render(el, ctx) {
 
   el.innerHTML = `
     <div class="page-head"><h1>Imports</h1>
-      <div class="toolbar">${canImport ? `<button id="sync" class="primary">Sync Gmail Now</button>
+      <div class="toolbar">${canImport ? `${subs.some(x => x.status === 'failed') ? '<button id="retry">Retry failed imports</button>' : ''}<button id="sync" class="primary">Sync Gmail Now</button>
         <label class="btn">Upload Excel…<input type="file" id="file" accept=".xlsx,.xlsm" class="hidden" multiple></label>` : ''}</div></div>
 
     <div class="grid cols-2">
@@ -64,6 +64,11 @@ export async function render(el, ctx) {
     toast(r.message || r.status, r.status !== 'ok');
     render(el, ctx);
   }).catch(err => toast(err.message, true)));
+  el.querySelector('#retry')?.addEventListener('click', (e) => withBusy(e.currentTarget, async () => {
+    const r = await api.post('/api/imports/retry-failed');
+    toast(r.message, r.still_failed > 0 || r.file_missing > 0);
+    render(el, ctx);
+  }).catch(err => toast(err.message, true)));
   el.querySelector('#file')?.addEventListener('change', async (e) => {
     const files = [...e.target.files];
     const results = [];
@@ -90,6 +95,14 @@ async function showSubmission(id, isAdmin, refresh) {
   const s = await api.get(`/api/imports/submissions/${id}`);
   const actions = [{ label: 'Close' }];
   if (s.has_file) actions.unshift({ label: 'Download original file', onClick: async () => { await download(`/api/imports/submissions/${id}/file`, null, s.filename); return false; } });
+  if (s.status === 'failed' && s.has_file) actions.unshift({
+    label: 'Retry this file', cls: 'primary', onClick: async () => {
+      const r = await api.post(`/api/imports/submissions/${id}/retry`);
+      toast(r[0]?.status === 'failed' ? `Still failing: ${r[0].error}` : 'Imported.', r[0]?.status === 'failed');
+      refresh();
+      return true;
+    },
+  });
   if (isAdmin && s.status !== 'duplicate') actions.unshift({
     label: 'Remove this import', cls: 'danger', onClick: async () => {
       if (!confirm('Remove this timesheet and its rows from the database? The original file stays in the imports folder.')) return false;
